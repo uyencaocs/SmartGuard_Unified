@@ -1,0 +1,32 @@
+name: smartguard_mobile
+description: "SmartGuard Unified - He thong Camera giam sat an ninh thong minh AI & Sinh trac hoc"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.12.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  http: ^1.3.0
+  shared_preferences: ^2.3.5
+  flutter_secure_storage: ^9.2.4
+  camera: ^0.12.1
+  sensors_plus: ^7.1.1
+  google_mlkit_face_detection: ^0.15.1
+  flutter_tts: ^4.2.5
+  local_auth: ^3.0.2
+  audioplayers: ^6.1.0
+  vibration: ^3.2.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/
