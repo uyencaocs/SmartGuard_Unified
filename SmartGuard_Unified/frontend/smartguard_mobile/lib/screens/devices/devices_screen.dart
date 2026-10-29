@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import '../../core/api_client.dart';
 import '../../core/app_theme.dart';
 import '../../models/models.dart';
+import '../../services/device_service.dart';
 import '../../widgets/capybara_widgets.dart';
 
 class DevicesScreen extends StatefulWidget {
@@ -24,61 +24,179 @@ class _DevicesScreenState extends State<DevicesScreen> {
   Future<void> _fetchDevices() async {
     setState(() => _isLoading = true);
     try {
-      final res = await ApiClient.request('GET', '/api/devices');
-      if (res is List) {
-        setState(() {
-          _devices = res.map((d) => DeviceModel.fromJson(d as Map<String, dynamic>)).toList();
-        });
-      }
+      final devices = await DeviceService.getDevices();
+      setState(() => _devices = devices);
     } catch (_) {
-      if (_devices.isEmpty) {
-        _devices = [
-          DeviceModel(
-            id: '1',
-            ownerId: 'owner-1',
-            name: 'Camera cửa chính',
-            deviceCode: 'CAM-01',
-            description: 'Giám sát lối vào chính',
-            isArmed: true,
-            registeredAt: DateTime.now(),
-            lastSeenAt: DateTime.now(),
-          ),
-          DeviceModel(
-            id: '2',
-            ownerId: 'owner-1',
-            name: 'Camera phòng khách',
-            deviceCode: 'CAM-02',
-            description: 'Giám sát không gian sinh hoạt chung',
-            isArmed: true,
-            registeredAt: DateTime.now(),
-            lastSeenAt: DateTime.now(),
-          ),
-          DeviceModel(
-            id: '3',
-            ownerId: 'owner-1',
-            name: 'Cảm biến chuyển động',
-            deviceCode: 'SNS-01',
-            description: 'Hành lang tầng 1',
-            isArmed: true,
-            registeredAt: DateTime.now(),
-            lastSeenAt: DateTime.now(),
-          ),
-        ];
-      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  void _showAddDeviceDialog() {
+  Future<void> _toggleDeviceArm(DeviceModel device) async {
+    try {
+      final res = await DeviceService.toggleArm(device.id);
+      final newArm = res['isArmed'] == true;
+
+      setState(() {
+        final index = _devices.indexWhere((d) => d.id == device.id);
+        if (index != -1) {
+          _devices[index] = DeviceModel(
+            id: device.id,
+            ownerId: device.ownerId,
+            zoneId: device.zoneId,
+            zoneName: device.zoneName,
+            name: device.name,
+            deviceCode: device.deviceCode,
+            description: device.description,
+            isArmed: newArm,
+            noiseThreshold: device.noiseThreshold,
+            motionThreshold: device.motionThreshold,
+            registeredAt: device.registeredAt,
+            lastSeenAt: DateTime.now(),
+          );
+        }
+      });
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          backgroundColor: newArm ? AppTheme.statusGreen : AppTheme.primaryPurple,
+          content: Text(newArm ? '🐾 Đã bật bảo vệ cho [${device.name}]' : 'Đã tắt bảo vệ cho [${device.name}]'),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Lỗi: $e'), backgroundColor: AppTheme.statusDanger),
+      );
+    }
+  }
+
+  void _showPairDeviceDialog() {
+    final codeCtrl = TextEditingController();
+    bool isPairing = false;
+    String? pairError;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+            title: const Row(
+              children: [
+                CapybaraAvatar(size: 34),
+                SizedBox(width: 10),
+                Text('Ghép Nối Thiết Bị', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Nhập mã phần cứng in trên nhãn thiết bị camera (Ví dụ: CAM-01 hoặc SNS-01):',
+                  style: TextStyle(fontSize: 13, color: AppTheme.textSecondary),
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: codeCtrl,
+                  textCapitalization: TextCapitalization.characters,
+                  decoration: const InputDecoration(
+                    labelText: 'Mã thiết bị (Device Code)',
+                    prefixIcon: Icon(Icons.qr_code, color: AppTheme.primaryPurple),
+                    hintText: 'CAM-01',
+                  ),
+                ),
+                if (pairError != null) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    pairError!,
+                    style: const TextStyle(color: AppTheme.statusDanger, fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: isPairing ? null : () => Navigator.of(ctx).pop(),
+                child: const Text('Hủy', style: TextStyle(color: AppTheme.textSecondary)),
+              ),
+              ElevatedButton(
+                onPressed: isPairing
+                    ? null
+                    : () async {
+                        final code = codeCtrl.text.trim();
+                        if (code.isEmpty) return;
+
+                        setDialogState(() {
+                          isPairing = true;
+                          pairError = null;
+                        });
+
+                        try {
+                          final res = await DeviceService.pairDevice(code);
+                          if (!ctx.mounted) return;
+                          Navigator.of(ctx).pop();
+                          if (!mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              behavior: SnackBarBehavior.floating,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              backgroundColor: AppTheme.statusGreen,
+                              content: Row(
+                                children: [
+                                  const Icon(Icons.check_circle, color: Colors.white),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      res['message']?.toString() ?? 'Ghép nối thiết bị thành công!',
+                                      style: const TextStyle(fontWeight: FontWeight.bold),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                          _fetchDevices();
+                        } catch (e) {
+                          setDialogState(() {
+                            isPairing = false;
+                            pairError = e.toString().replaceAll('Exception:', '').trim();
+                          });
+                        }
+                      },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.primaryPurple,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                child: isPairing
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                      )
+                    : const Text('Ghép Nối'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  void _showAddManualDeviceDialog() {
     final nameCtrl = TextEditingController();
-    final codeCtrl = TextEditingController(text: 'DEV-${DateTime.now().millisecondsSinceEpoch % 10000}');
+    final descCtrl = TextEditingController();
 
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        title: const Text('Thêm thiết bị mới'),
+        title: const Text('Thêm Thiết Bị Mới'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -91,10 +209,10 @@ class _DevicesScreenState extends State<DevicesScreen> {
             ),
             const SizedBox(height: 12),
             TextField(
-              controller: codeCtrl,
+              controller: descCtrl,
               decoration: const InputDecoration(
-                labelText: 'Mã thiết bị',
-                prefixIcon: Icon(Icons.qr_code),
+                labelText: 'Vị trí / Mô tả',
+                prefixIcon: Icon(Icons.location_on_outlined),
               ),
             ),
           ],
@@ -109,18 +227,17 @@ class _DevicesScreenState extends State<DevicesScreen> {
               final name = nameCtrl.text.trim();
               if (name.isNotEmpty) {
                 try {
-                  await ApiClient.request('POST', '/api/devices', body: {
-                    'name': name,
-                    'deviceCode': codeCtrl.text.trim(),
-                    'description': 'Thiết bị bảo vệ gia đình',
-                  });
+                  await DeviceService.createDevice(
+                    name: name,
+                    description: descCtrl.text.trim(),
+                  );
+                  if (mounted) _fetchDevices();
                 } catch (_) {}
-                if (mounted) _fetchDevices();
               }
               if (ctx.mounted) Navigator.of(ctx).pop();
             },
             style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryPurple),
-            child: const Text('Thêm ngay', style: TextStyle(color: Colors.white)),
+            child: const Text('Tạo ngay', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
@@ -137,6 +254,12 @@ class _DevicesScreenState extends State<DevicesScreen> {
           onPressed: () => Navigator.of(context).pop(),
         ),
         title: const Text('Thiết bị an ninh'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh, color: AppTheme.primaryPurple),
+            onPressed: _fetchDevices,
+          ),
+        ],
       ),
       body: SafeArea(
         child: Padding(
@@ -146,72 +269,133 @@ class _DevicesScreenState extends State<DevicesScreen> {
               Expanded(
                 child: _isLoading
                     ? const Center(child: CircularProgressIndicator(color: AppTheme.primaryPurple))
-                    : ListView.builder(
-                        itemCount: _devices.length,
-                        itemBuilder: (context, index) {
-                          final dev = _devices[index];
-                          return Container(
-                            margin: const EdgeInsets.only(bottom: 12),
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(color: const Color(0xFFF1E7DD)),
-                            ),
-                            child: Row(
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.all(10),
-                                  decoration: BoxDecoration(
-                                    color: AppTheme.primaryPurple.withValues(alpha: 0.1),
-                                    borderRadius: BorderRadius.circular(14),
+                    : _devices.isEmpty
+                        ? CapybaraEmptyState(
+                            title: 'Chưa có thiết bị nào',
+                            message: 'Hãy ghép nối camera an ninh hoặc cảm biến để Capybara bắt đầu canh gác.',
+                            buttonText: 'Ghép nối camera ngay',
+                            onButtonPressed: _showPairDeviceDialog,
+                          )
+                        : ListView.builder(
+                            itemCount: _devices.length,
+                            itemBuilder: (context, index) {
+                              final dev = _devices[index];
+
+                              return Container(
+                                margin: const EdgeInsets.only(bottom: 12),
+                                padding: const EdgeInsets.all(16),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(
+                                    color: dev.isArmed ? const Color(0xFFC8F3D7) : const Color(0xFFF1E7DD),
+                                    width: dev.isArmed ? 1.5 : 1,
                                   ),
-                                  child: const Icon(Icons.videocam_outlined, color: AppTheme.primaryPurple),
-                                ),
-                                const SizedBox(width: 14),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        dev.name,
-                                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-                                      ),
-                                      const SizedBox(height: 3),
-                                      Text(
-                                        'Mã: ${dev.deviceCode} • ${dev.description}',
-                                        style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                  decoration: BoxDecoration(
-                                    color: AppTheme.statusGreenBg,
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: const Text(
-                                    'Online',
-                                    style: TextStyle(
-                                      color: AppTheme.statusGreen,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.bold,
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withValues(alpha: 0.02),
+                                      blurRadius: 8,
+                                      offset: const Offset(0, 3),
                                     ),
-                                  ),
+                                  ],
                                 ),
-                              ],
-                            ),
-                          );
-                        },
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.all(10),
+                                      decoration: BoxDecoration(
+                                        color: dev.isArmed
+                                            ? AppTheme.statusGreenBg
+                                            : AppTheme.primaryPurple.withValues(alpha: 0.1),
+                                        borderRadius: BorderRadius.circular(14),
+                                      ),
+                                      child: Icon(
+                                        Icons.videocam_outlined,
+                                        color: dev.isArmed ? AppTheme.statusGreen : AppTheme.primaryPurple,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 14),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            dev.name,
+                                            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                                          ),
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            'Mã: ${dev.deviceCode} ${dev.zoneName != null ? "• ${dev.zoneName}" : ""}',
+                                            style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Row(
+                                            children: [
+                                              Container(
+                                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                decoration: BoxDecoration(
+                                                  color: dev.isArmed ? AppTheme.statusGreenBg : const Color(0xFFF1F5F9),
+                                                  borderRadius: BorderRadius.circular(6),
+                                                ),
+                                                child: Text(
+                                                  dev.isArmed ? 'Đang bật bảo vệ' : 'Tắt bảo vệ',
+                                                  style: TextStyle(
+                                                    color: dev.isArmed ? AppTheme.statusGreen : AppTheme.textMuted,
+                                                    fontSize: 10,
+                                                    fontWeight: FontWeight.bold,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    Switch(
+                                      value: dev.isArmed,
+                                      activeThumbColor: AppTheme.statusGreen,
+                                      onChanged: (_) => _toggleDeviceArm(dev),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
+              ),
+              const SizedBox(height: 8),
+
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _showPairDeviceDialog,
+                      icon: const Icon(Icons.qr_code_scanner, color: AppTheme.primaryPurple),
+                      label: const Text('Ghép Nối Mã'),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        side: const BorderSide(color: AppTheme.primaryPurple),
+                        foregroundColor: AppTheme.primaryPurple,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                       ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: _showAddManualDeviceDialog,
+                      icon: const Icon(Icons.add, color: Colors.white),
+                      label: const Text('Tạo Thiết Bị'),
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        backgroundColor: AppTheme.primaryPurple,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 10),
-              CapybaraGradientButton(
-                text: '+ Thêm thiết bị',
-                onPressed: _showAddDeviceDialog,
-              ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 12),
             ],
           ),
         ),

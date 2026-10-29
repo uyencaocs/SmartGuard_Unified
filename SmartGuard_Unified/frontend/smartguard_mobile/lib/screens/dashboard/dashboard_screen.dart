@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import '../../core/api_client.dart';
 import '../../core/app_config.dart';
 import '../../core/app_theme.dart';
 import '../../models/models.dart';
+import '../../services/adaptive_security_service.dart';
+import '../../services/alert_service.dart';
+import '../../services/device_service.dart';
 import '../../widgets/capybara_widgets.dart';
 import '../adaptive/adaptive_security_screen.dart';
 
@@ -16,28 +18,45 @@ class DashboardScreen extends StatefulWidget {
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen> {
+class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProviderStateMixin {
   bool _isLoading = true;
   bool _isTogglingArm = false;
   bool _isArmed = true;
   String? _deviceId;
-  String _currentMode = 'Home'; // Home, Away, Night
+  String _currentMode = 'Home';
+  List<AdaptiveProfileModel> _profiles = [];
   List<AlertModel> _recentAlerts = [];
   int _deviceCount = 0;
   String _pingLatency = 'Tốt';
 
   Timer? _refreshTimer;
 
+  // Hold-to-disarm animation variables
+  late AnimationController _holdController;
+
   @override
   void initState() {
     super.initState();
+    _holdController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    );
+
+    _holdController.addStatusListener((status) {
+      if (status == AnimationStatus.completed) {
+        _executeToggleArm();
+        _holdController.reset();
+      }
+    });
+
     _loadDashboardData();
-    _refreshTimer = Timer.periodic(const Duration(seconds: 15), (_) => _loadDashboardData(silent: true));
+    _refreshTimer = Timer.periodic(const Duration(seconds: 12), (_) => _loadDashboardData(silent: true));
   }
 
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _holdController.dispose();
     super.dispose();
   }
 
@@ -45,75 +64,76 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (!silent) setState(() => _isLoading = true);
 
     try {
-      // 1. Fetch devices to check arm status
-      final devicesRes = await ApiClient.request('GET', '/api/devices');
-      if (devicesRes is List && devicesRes.isNotEmpty) {
-        final devices = devicesRes.map((d) => DeviceModel.fromJson(d as Map<String, dynamic>)).toList();
-        _deviceCount = devices.length;
+      // 1. Lấy danh sách thiết bị từ Backend (GET /api/devices)
+      final devices = await DeviceService.getDevices();
+      _deviceCount = devices.length;
+      if (devices.isNotEmpty) {
         final mainDev = devices.first;
         _deviceId = mainDev.id;
         _isArmed = mainDev.isArmed;
       }
 
-      // 2. Fetch current adaptive mode
+      // 2. Lấy hồ sơ chế độ thích ứng từ Backend (GET /api/adaptivesecurity/profiles)
       try {
-        final modeRes = await ApiClient.request('GET', '/api/adaptivesecurity/current-mode');
-        if (modeRes is Map<String, dynamic> && modeRes['currentMode'] != null) {
-          _currentMode = modeRes['currentMode'].toString();
-        }
+        _profiles = await AdaptiveSecurityService.getProfiles();
+        final active = _profiles.firstWhere((p) => p.isActive, orElse: () => _profiles.first);
+        _currentMode = active.modeName;
       } catch (_) {}
 
-      // 3. Fetch recent alerts
+      // 3. Lấy các sự kiện cảnh báo mới nhất (GET /api/alerts/history?limit=5)
       try {
-        final alertsRes = await ApiClient.request('GET', '/api/alerts', queryParams: {
-          'pageSize': '5',
-          'page': '1',
-        });
-        if (alertsRes is Map<String, dynamic> && alertsRes['items'] is List) {
-          _recentAlerts = (alertsRes['items'] as List)
-              .map((a) => AlertModel.fromJson(a as Map<String, dynamic>))
-              .toList();
-        }
+        _recentAlerts = await AlertService.getAlertHistory(limit: 5);
       } catch (_) {}
 
-      // 4. Ping latency
+      // 4. Đo độ trễ kết nối (Latency ping)
       final stopwatch = Stopwatch()..start();
-      await AppConfig.pingServer(AppConfig.baseUrl);
+      final pingOk = await AppConfig.pingServer(AppConfig.baseUrl);
       stopwatch.stop();
-      _pingLatency = '${stopwatch.elapsedMilliseconds}ms';
+      _pingLatency = pingOk ? '${stopwatch.elapsedMilliseconds}ms' : 'Offline';
     } catch (_) {
-      // Graceful fallback with demo state
       _pingLatency = 'Offline';
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  Future<void> _toggleArm() async {
+  Future<void> _executeToggleArm() async {
+    if (_deviceId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Chưa có thiết bị nào được ghép nối để bật/tắt an ninh.'),
+          backgroundColor: AppTheme.warmAmber,
+        ),
+      );
+      return;
+    }
+
     setState(() => _isTogglingArm = true);
-    final targetArm = !_isArmed;
 
     try {
-      if (_deviceId != null) {
-        await ApiClient.request('PUT', '/api/devices/$_deviceId/arm', body: {
-          'isArmed': targetArm,
-        });
-      }
-      setState(() => _isArmed = targetArm);
+      // Gọi endpoint PATCH /api/devices/{id}/toggle-arm
+      final res = await DeviceService.toggleArm(_deviceId!);
+      final newArmed = res['isArmed'] == true;
+
+      setState(() => _isArmed = newArmed);
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          backgroundColor: targetArm ? AppTheme.statusGreen : AppTheme.primaryPurple,
+          backgroundColor: newArmed ? AppTheme.statusGreen : AppTheme.primaryPurple,
           content: Row(
             children: [
-              Icon(targetArm ? Icons.shield : Icons.shield_outlined, color: Colors.white),
+              Icon(newArmed ? Icons.shield : Icons.nightlight_round, color: Colors.white),
               const SizedBox(width: 8),
-              Text(
-                targetArm ? '🐾 Capybara đã kích hoạt bảo vệ an ninh!' : 'Đã tắt bảo vệ an ninh.',
-                style: const TextStyle(fontWeight: FontWeight.bold),
+              Expanded(
+                child: Text(
+                  newArmed
+                      ? '🐾 Capybara đã kích hoạt toàn diện chế độ bảo vệ!'
+                      : 'Đã tắt bảo vệ. Hệ thống chuyển sang chế độ chờ.',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
               ),
             ],
           ),
@@ -123,7 +143,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Lỗi cập nhật: ${e.toString().replaceAll("Exception:", "")}'),
+          content: Text('Lỗi: ${e.toString().replaceAll("Exception:", "")}'),
           backgroundColor: AppTheme.statusDanger,
         ),
       );
@@ -132,15 +152,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  Future<void> _changeMode(String mode) async {
+  Future<void> _changeMode(String modeKey) async {
     try {
-      await ApiClient.request('POST', '/api/adaptivesecurity/change-mode', body: {
-        'mode': mode,
-        'reason': 'Người dùng chuyển trên ứng dụng di động',
-      });
-      setState(() => _currentMode = mode);
+      final targetProfile = _profiles.firstWhere(
+        (p) => p.modeName.toLowerCase() == modeKey.toLowerCase(),
+        orElse: () => _profiles.first,
+      );
+
+      // Kích hoạt qua API POST /api/adaptivesecurity/profiles/{id}/activate
+      await AdaptiveSecurityService.activateProfile(targetProfile.id);
+      setState(() => _currentMode = modeKey);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 2),
+          backgroundColor: AppTheme.primaryPurple,
+          content: Text('🐾 Đã chuyển sang chế độ [${targetProfile.displayName}]'),
+        ),
+      );
     } catch (_) {
-      setState(() => _currentMode = mode);
+      setState(() => _currentMode = modeKey);
     }
   }
 
@@ -158,7 +191,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               CircularProgressIndicator(color: AppTheme.primaryPurple),
               SizedBox(height: 12),
               Text(
-                'Capybara đang kết nối hệ thống...',
+                'Capybara đang đồng bộ API hệ thống...',
                 style: TextStyle(color: AppTheme.textSecondary, fontWeight: FontWeight.w600),
               ),
             ],
@@ -179,7 +212,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Top App Header
+                // Top Header
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -216,7 +249,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         clipBehavior: Clip.none,
                         children: [
                           const Icon(Icons.notifications_none_outlined, size: 26, color: AppTheme.textPrimary),
-                          if (_recentAlerts.isNotEmpty)
+                          if (_recentAlerts.any((a) => a.status.toLowerCase() == 'triggered'))
                             Positioned(
                               top: -2,
                               right: -2,
@@ -224,7 +257,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 width: 9,
                                 height: 9,
                                 decoration: const BoxDecoration(
-                                  color: AppTheme.primaryCoral,
+                                  color: AppTheme.statusDanger,
                                   shape: BoxShape.circle,
                                 ),
                               ),
@@ -237,20 +270,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
                 const SizedBox(height: 18),
 
-                // BIG HERO CARD: Protection Status (Matching Mockup)
+                // Hero Card: Bật/Tắt bảo vệ (PATCH /api/devices/{id}/toggle-arm)
                 _buildHeroCard(),
                 const SizedBox(height: 18),
 
-                // 4 METRIC CARDS (2x2 Grid)
+                // 4 Metric Cards (Lưới 2x2)
                 Row(
                   children: [
                     Expanded(
                       child: CapybaraMetricCard(
                         icon: Icons.videocam_outlined,
                         title: 'Camera',
-                        value: _deviceCount > 0 ? '$_deviceCount hoạt động' : 'Hoạt động',
+                        value: _deviceCount > 0 ? '$_deviceCount hoạt động' : 'Chưa có Cam',
                         iconColor: AppTheme.statusGreen,
-                        statusColor: AppTheme.statusGreen,
+                        statusColor: _deviceCount > 0 ? AppTheme.statusGreen : AppTheme.warmAmber,
                         onTap: () => widget.onTabChange?.call(2),
                       ),
                     ),
@@ -258,7 +291,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     Expanded(
                       child: CapybaraMetricCard(
                         icon: Icons.wifi,
-                        title: 'Kết nối',
+                        title: 'Kết nối API',
                         value: _pingLatency,
                         iconColor: AppTheme.primaryPurple,
                         statusColor: _pingLatency == 'Offline' ? AppTheme.statusDanger : AppTheme.statusGreen,
@@ -291,11 +324,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
                 const SizedBox(height: 22),
 
-                // Quick Adaptive Mode Selector (Ở nhà / Rời nhà / Ban đêm)
+                // Chế độ thích ứng (Adaptive profiles)
                 _buildAdaptiveModesSelector(),
                 const SizedBox(height: 22),
 
-                // Recent Events Section (Sự kiện gần đây)
+                // Sự kiện gần đây (Recent alerts)
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -355,7 +388,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              // Badge icon status
               Container(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
@@ -384,7 +416,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     const SizedBox(height: 3),
                     Text(
                       _isArmed
-                          ? 'Hệ thống hoạt động bình thường'
+                          ? 'Hệ thống camera & AI hoạt động bình thường'
                           : 'Hệ thống đang ở chế độ chờ / nghỉ ngơi',
                       style: const TextStyle(
                         fontSize: 12,
@@ -395,56 +427,113 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ],
                 ),
               ),
-              // Capybara Avatar Guard
               const CapybaraAvatar(size: 64),
             ],
           ),
           const SizedBox(height: 20),
 
-          // Action Button: Tắt bảo vệ / Kích hoạt bảo vệ
-          InkWell(
-            onTap: _isTogglingArm ? null : _toggleArm,
-            borderRadius: BorderRadius.circular(20),
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              decoration: BoxDecoration(
-                color: _isArmed ? const Color(0xFFFFF0F0) : AppTheme.statusGreenBg,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: _isArmed ? AppTheme.statusDanger.withValues(alpha: 0.3) : AppTheme.statusGreen,
-                ),
-              ),
-              child: Center(
-                child: _isTogglingArm
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            _isArmed ? Icons.lock_outline : Icons.shield,
-                            color: _isArmed ? AppTheme.statusDanger : AppTheme.statusGreen,
-                            size: 18,
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            _isArmed ? 'TẮT BẢO VỆ' : 'KÍCH HOẠT BẢO VỆ NGAY',
-                            style: TextStyle(
-                              color: _isArmed ? AppTheme.statusDanger : AppTheme.statusGreen,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 0.5,
+          // Action Button: Nhấn để Bật / Nhấn giữ 1.5s để Tắt (Anti-accidental disarming)
+          if (_isArmed) ...[
+            GestureDetector(
+              onTapDown: (_) => _holdController.forward(),
+              onTapUp: (_) => _holdController.reverse(),
+              onTapCancel: () => _holdController.reverse(),
+              child: AnimatedBuilder(
+                animation: _holdController,
+                builder: (context, child) {
+                  return Container(
+                    width: double.infinity,
+                    height: 52,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFF0F0),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: AppTheme.statusDanger.withValues(alpha: 0.4),
+                      ),
+                    ),
+                    child: Stack(
+                      children: [
+                        // Thanh tiến trình khi giữ nút
+                        FractionallySizedBox(
+                          widthFactor: _holdController.value,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: AppTheme.statusDanger.withValues(alpha: 0.25),
+                              borderRadius: BorderRadius.circular(20),
                             ),
                           ),
-                        ],
-                      ),
+                        ),
+                        Center(
+                          child: _isTogglingArm
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    const Icon(Icons.lock_open, color: AppTheme.statusDanger, size: 18),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      _holdController.value > 0
+                                          ? 'ĐANG GIỮ ĐỂ TẮT BẢO VỆ...'
+                                          : 'NHẤN GIỮ 1.5s ĐỂ TẮT BẢO VỆ',
+                                      style: const TextStyle(
+                                        color: AppTheme.statusDanger,
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w800,
+                                        letterSpacing: 0.5,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
               ),
             ),
-          ),
+          ] else ...[
+            InkWell(
+              onTap: _isTogglingArm ? null : _executeToggleArm,
+              borderRadius: BorderRadius.circular(20),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                decoration: BoxDecoration(
+                  color: AppTheme.statusGreenBg,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: AppTheme.statusGreen),
+                ),
+                child: Center(
+                  child: _isTogglingArm
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.shield, color: AppTheme.statusGreen, size: 18),
+                            SizedBox(width: 8),
+                            Text(
+                              'KÍCH HOẠT BẢO VỆ NGAY',
+                              style: TextStyle(
+                                color: AppTheme.statusGreen,
+                                fontSize: 15,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -553,7 +642,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             SizedBox(width: 12),
             Expanded(
               child: Text(
-                'Chưa có sự kiện khả nghi nào. Ngôi nhà đang được bảo vệ an toàn!',
+                'Chưa có sự kiện an ninh nào. Ngôi nhà đang được bảo vệ an toàn!',
                 style: TextStyle(fontSize: 13, color: AppTheme.textSecondary),
               ),
             ),
@@ -564,7 +653,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     return Column(
       children: _recentAlerts.map((alert) {
-        final isStranger = alert.alertType.contains('Face') || alert.alertType.contains('Stranger');
+        final isStranger = alert.triggerReason.toUpperCase().contains('FACE') ||
+            alert.triggerReason.toUpperCase().contains('STRANGER');
         return Container(
           margin: const EdgeInsets.only(bottom: 10),
           padding: const EdgeInsets.all(12),
@@ -602,7 +692,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      alert.description.isNotEmpty ? alert.description : 'Camera giám sát',
+                      '${alert.deviceName} • ${alert.description}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),

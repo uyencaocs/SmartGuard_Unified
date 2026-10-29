@@ -20,7 +20,7 @@ class ApiClient {
   static Future<dynamic> request(
     String method,
     String path, {
-    Map<String, dynamic>? body,
+    dynamic body,
     Map<String, String>? queryParams,
     Duration timeout = const Duration(seconds: 15),
   }) async {

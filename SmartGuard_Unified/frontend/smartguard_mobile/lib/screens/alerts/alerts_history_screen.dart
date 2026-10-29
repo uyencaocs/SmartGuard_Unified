@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import '../../core/api_client.dart';
 import '../../core/app_config.dart';
 import '../../core/app_theme.dart';
 import '../../models/models.dart';
+import '../../services/alert_service.dart';
 import '../../widgets/capybara_widgets.dart';
 
 class AlertsHistoryScreen extends StatefulWidget {
@@ -15,7 +15,7 @@ class AlertsHistoryScreen extends StatefulWidget {
 class _AlertsHistoryScreenState extends State<AlertsHistoryScreen> {
   bool _isLoading = true;
   List<AlertModel> _alerts = [];
-  String _selectedFilter = 'Tất cả'; // 'Tất cả', 'Hôm nay', 'Hôm qua', '7 ngày'
+  String _selectedFilter = 'Tất cả';
   String _searchQuery = '';
 
   @override
@@ -27,63 +27,9 @@ class _AlertsHistoryScreenState extends State<AlertsHistoryScreen> {
   Future<void> _fetchAlerts() async {
     setState(() => _isLoading = true);
     try {
-      final res = await ApiClient.request('GET', '/api/alerts', queryParams: {
-        'page': '1',
-        'pageSize': '50',
-      });
-
-      if (res is Map<String, dynamic> && res['items'] is List) {
-        final items = (res['items'] as List)
-            .map((item) => AlertModel.fromJson(item as Map<String, dynamic>))
-            .toList();
-        setState(() => _alerts = items);
-      }
+      final alerts = await AlertService.getAlertHistory(limit: 100);
+      setState(() => _alerts = alerts);
     } catch (_) {
-      // Mock sample data if backend is offline or empty
-      if (_alerts.isEmpty) {
-        _alerts = [
-          AlertModel(
-            id: '1',
-            deviceId: 'dev-1',
-            alertType: 'Face_Stranger',
-            severity: 'High',
-            title: 'Phát hiện người lạ',
-            description: 'Khuôn mặt chưa định danh tại Camera cửa chính',
-            isResolved: false,
-            createdAt: DateTime.now().subtract(const Duration(minutes: 15)),
-          ),
-          AlertModel(
-            id: '2',
-            deviceId: 'dev-1',
-            alertType: 'Motion',
-            severity: 'Medium',
-            title: 'Phát hiện chuyển động',
-            description: 'Chuyển động vượt ngưỡng tại Sân trước',
-            isResolved: true,
-            createdAt: DateTime.now().subtract(const Duration(hours: 2)),
-          ),
-          AlertModel(
-            id: '3',
-            deviceId: 'dev-2',
-            alertType: 'Noise',
-            severity: 'Medium',
-            title: 'Âm thanh bất thường',
-            description: 'Tiếng ồn lớn 82dB tại Phòng khách',
-            isResolved: true,
-            createdAt: DateTime.now().subtract(const Duration(hours: 4)),
-          ),
-          AlertModel(
-            id: '4',
-            deviceId: 'dev-1',
-            alertType: 'System',
-            severity: 'Low',
-            title: 'Hệ thống khởi động',
-            description: 'Capybara Guard đã tự động kích hoạt canh gác',
-            isResolved: true,
-            createdAt: DateTime.now().subtract(const Duration(days: 1)),
-          ),
-        ];
-      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -96,47 +42,49 @@ class _AlertsHistoryScreenState extends State<AlertsHistoryScreen> {
         final q = _searchQuery.toLowerCase();
         final match = a.title.toLowerCase().contains(q) ||
             a.description.toLowerCase().contains(q) ||
-            a.alertType.toLowerCase().contains(q);
+            a.deviceName.toLowerCase().contains(q);
         if (!match) return false;
       }
 
       if (_selectedFilter == 'Hôm nay') {
-        return a.createdAt.year == now.year &&
-            a.createdAt.month == now.month &&
-            a.createdAt.day == now.day;
+        return a.triggeredAt.year == now.year &&
+            a.triggeredAt.month == now.month &&
+            a.triggeredAt.day == now.day;
       } else if (_selectedFilter == 'Hôm qua') {
         final yesterday = now.subtract(const Duration(days: 1));
-        return a.createdAt.year == yesterday.year &&
-            a.createdAt.month == yesterday.month &&
-            a.createdAt.day == yesterday.day;
+        return a.triggeredAt.year == yesterday.year &&
+            a.triggeredAt.month == yesterday.month &&
+            a.triggeredAt.day == yesterday.day;
       } else if (_selectedFilter == '7 ngày') {
-        return now.difference(a.createdAt).inDays <= 7;
+        return now.difference(a.triggeredAt).inDays <= 7;
       }
       return true;
     }).toList();
   }
 
   Color _getSeverityColor(String type) {
-    if (type.contains('Face') || type.contains('Stranger') || type.contains('High')) {
+    final t = type.toUpperCase();
+    if (t.contains('STRANGER') || t.contains('FACE') || t.contains('HIGH')) {
       return AppTheme.statusDanger;
     }
-    if (type.contains('Motion') || type.contains('Warning')) {
+    if (t.contains('CHUYEN_DONG') || t.contains('MOTION')) {
       return AppTheme.warmAmber;
     }
-    if (type.contains('Noise') || type.contains('Sound')) {
+    if (t.contains('TIENG_ON') || t.contains('NOISE')) {
       return AppTheme.primaryPurple;
     }
     return Colors.blueAccent;
   }
 
   IconData _getSeverityIcon(String type) {
-    if (type.contains('Face') || type.contains('Stranger')) {
+    final t = type.toUpperCase();
+    if (t.contains('STRANGER') || t.contains('FACE')) {
       return Icons.person_search;
     }
-    if (type.contains('Motion')) {
+    if (t.contains('CHUYEN_DONG') || t.contains('MOTION')) {
       return Icons.directions_run;
     }
-    if (type.contains('Noise') || type.contains('Sound')) {
+    if (t.contains('TIENG_ON') || t.contains('NOISE')) {
       return Icons.volume_up;
     }
     return Icons.settings_backup_restore;
@@ -152,10 +100,10 @@ class _AlertsHistoryScreenState extends State<AlertsHistoryScreen> {
             Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: _getSeverityColor(alert.alertType).withValues(alpha: 0.15),
+                color: _getSeverityColor(alert.triggerReason).withValues(alpha: 0.15),
                 shape: BoxShape.circle,
               ),
-              child: Icon(_getSeverityIcon(alert.alertType), color: _getSeverityColor(alert.alertType), size: 22),
+              child: Icon(_getSeverityIcon(alert.triggerReason), color: _getSeverityColor(alert.triggerReason), size: 22),
             ),
             const SizedBox(width: 10),
             Expanded(
@@ -166,61 +114,62 @@ class _AlertsHistoryScreenState extends State<AlertsHistoryScreen> {
             ),
           ],
         ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (alert.evidenceImagePath != null && alert.evidenceImagePath!.isNotEmpty) ...[
-              ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: Image.network(
-                  '${AppConfig.baseUrl}/evidence/${alert.evidenceImagePath}',
-                  height: 180,
-                  width: double.infinity,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Container(
-                    height: 120,
-                    color: Colors.grey.shade200,
-                    child: const Center(
-                      child: Text('Không thể tải ảnh bằng chứng', style: TextStyle(fontSize: 12)),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (alert.imageUrl != null && alert.imageUrl!.isNotEmpty) ...[
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: Image.network(
+                    '${AppConfig.baseUrl}/evidence/${alert.imageUrl}',
+                    height: 180,
+                    width: double.infinity,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(
+                      height: 100,
+                      color: Colors.grey.shade200,
+                      child: const Center(
+                        child: Text('Không thể tải ảnh bằng chứng', style: TextStyle(fontSize: 12)),
+                      ),
                     ),
                   ),
                 ),
+                const SizedBox(height: 12),
+              ],
+              Text(
+                'Thiết bị: ${alert.deviceName} ${alert.zoneName != null ? "(${alert.zoneName})" : ""}',
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                alert.description,
+                style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Thời điểm: ${alert.triggeredAt.hour.toString().padLeft(2, '0')}:${alert.triggeredAt.minute.toString().padLeft(2, '0')} - ${alert.triggeredAt.day}/${alert.triggeredAt.month}/${alert.triggeredAt.year}',
+                style: const TextStyle(fontSize: 12, color: AppTheme.textMuted),
               ),
               const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: alert.isResolved ? AppTheme.statusGreenBg : AppTheme.statusDangerBg,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  alert.isResolved ? '✓ Đã xử lý (${alert.status})' : '⚠️ Trạng thái: Chưa xử lý',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: alert.isResolved ? AppTheme.statusGreen : AppTheme.statusDanger,
+                  ),
+                ),
+              ),
             ],
-            Text(
-              alert.description,
-              style: const TextStyle(fontSize: 14, color: AppTheme.textPrimary),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                const Icon(Icons.access_time, size: 14, color: AppTheme.textMuted),
-                const SizedBox(width: 4),
-                Text(
-                  '${alert.createdAt.hour.toString().padLeft(2, '0')}:${alert.createdAt.minute.toString().padLeft(2, '0')} - ${alert.createdAt.day}/${alert.createdAt.month}/${alert.createdAt.year}',
-                  style: const TextStyle(fontSize: 12, color: AppTheme.textMuted),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: alert.isResolved ? AppTheme.statusGreenBg : AppTheme.statusDangerBg,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                alert.isResolved ? '✓ Đã xử lý an toàn' : '⚠️ Cảnh báo chưa xử lý',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  color: alert.isResolved ? AppTheme.statusGreen : AppTheme.statusDanger,
-                ),
-              ),
-            ),
-          ],
+          ),
         ),
         actions: [
           TextButton(
@@ -231,7 +180,8 @@ class _AlertsHistoryScreenState extends State<AlertsHistoryScreen> {
             ElevatedButton(
               onPressed: () async {
                 try {
-                  await ApiClient.request('PUT', '/api/alerts/${alert.id}/resolve');
+                  // Gọi API POST /api/alerts/{id}/action
+                  await AlertService.acknowledgeAlert(alert.id, action: 'known');
                   if (mounted) _fetchAlerts();
                 } catch (_) {}
                 if (ctx.mounted) Navigator.of(ctx).pop();
@@ -241,7 +191,7 @@ class _AlertsHistoryScreenState extends State<AlertsHistoryScreen> {
                 foregroundColor: Colors.white,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
-              child: const Text('Đánh dấu đã xử lý'),
+              child: const Text('Xác nhận an toàn (Người quen)'),
             ),
         ],
       ),
@@ -289,7 +239,7 @@ class _AlertsHistoryScreenState extends State<AlertsHistoryScreen> {
               child: TextField(
                 onChanged: (val) => setState(() => _searchQuery = val),
                 decoration: InputDecoration(
-                  hintText: 'Tìm kiếm sự kiện, loại cảnh báo...',
+                  hintText: 'Tìm kiếm sự kiện, camera, khu vực...',
                   prefixIcon: const Icon(Icons.search, color: AppTheme.primaryPurple),
                   filled: true,
                   fillColor: Colors.white,
@@ -306,7 +256,7 @@ class _AlertsHistoryScreenState extends State<AlertsHistoryScreen> {
               ),
             ),
 
-            // Filter Chips (Tất cả, Hôm nay, Hôm qua, 7 ngày)
+            // Filter Chips
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
@@ -342,89 +292,88 @@ class _AlertsHistoryScreenState extends State<AlertsHistoryScreen> {
             // Alerts List
             Expanded(
               child: _isLoading
-                  ? const Center(
-                      child: CircularProgressIndicator(color: AppTheme.primaryPurple),
-                    )
+                  ? const Center(child: CircularProgressIndicator(color: AppTheme.primaryPurple))
                   : _filteredAlerts.isEmpty
                       ? const CapybaraEmptyState(
                           title: 'Không có cảnh báo nào',
                           message: 'Mọi phân vùng đều yên bình và được bảo vệ cẩn mật.',
                         )
-                      : ListView.builder(
-                          padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
-                          itemCount: _filteredAlerts.length,
-                          itemBuilder: (context, index) {
-                            final alert = _filteredAlerts[index];
-                            final color = _getSeverityColor(alert.alertType);
-                            final icon = _getSeverityIcon(alert.alertType);
+                      : RefreshIndicator(
+                          onRefresh: _fetchAlerts,
+                          color: AppTheme.primaryPurple,
+                          child: ListView.builder(
+                            padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+                            itemCount: _filteredAlerts.length,
+                            itemBuilder: (context, index) {
+                              final alert = _filteredAlerts[index];
+                              final color = _getSeverityColor(alert.triggerReason);
+                              final icon = _getSeverityIcon(alert.triggerReason);
 
-                            return GestureDetector(
-                              onTap: () => _showDetailDialog(alert),
-                              child: Container(
-                                margin: const EdgeInsets.only(bottom: 12),
-                                padding: const EdgeInsets.all(14),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(color: const Color(0xFFF1E7DD)),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withValues(alpha: 0.02),
-                                      blurRadius: 10,
-                                      offset: const Offset(0, 4),
+                              return GestureDetector(
+                                onTap: () => _showDetailDialog(alert),
+                                child: Container(
+                                  margin: const EdgeInsets.only(bottom: 12),
+                                  padding: const EdgeInsets.all(14),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(20),
+                                    border: Border.all(
+                                      color: alert.isResolved ? const Color(0xFFF1E7DD) : AppTheme.statusDanger.withValues(alpha: 0.3),
+                                      width: alert.isResolved ? 1.0 : 1.5,
                                     ),
-                                  ],
-                                ),
-                                child: Row(
-                                  children: [
-                                    Container(
-                                      padding: const EdgeInsets.all(10),
-                                      decoration: BoxDecoration(
-                                        color: color.withValues(alpha: 0.12),
-                                        borderRadius: BorderRadius.circular(14),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withValues(alpha: 0.02),
+                                        blurRadius: 10,
+                                        offset: const Offset(0, 4),
                                       ),
-                                      child: Icon(icon, color: color, size: 22),
-                                    ),
-                                    const SizedBox(width: 14),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            alert.title,
-                                            style: const TextStyle(
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.bold,
-                                              color: AppTheme.textPrimary,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 3),
-                                          Text(
-                                            alert.description,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: const TextStyle(
-                                              fontSize: 12,
-                                              color: AppTheme.textSecondary,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 4),
-                                          Text(
-                                            '${alert.createdAt.hour.toString().padLeft(2, '0')}:${alert.createdAt.minute.toString().padLeft(2, '0')} • ${alert.createdAt.day}/${alert.createdAt.month}',
-                                            style: const TextStyle(
-                                              fontSize: 11,
-                                              color: AppTheme.textMuted,
-                                            ),
-                                          ),
-                                        ],
+                                    ],
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.all(10),
+                                        decoration: BoxDecoration(
+                                          color: color.withValues(alpha: 0.12),
+                                          borderRadius: BorderRadius.circular(14),
+                                        ),
+                                        child: Icon(icon, color: color, size: 22),
                                       ),
-                                    ),
-                                    const Icon(Icons.arrow_forward_ios, size: 14, color: AppTheme.textMuted),
-                                  ],
+                                      const SizedBox(width: 14),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              alert.title,
+                                              style: const TextStyle(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.bold,
+                                                color: AppTheme.textPrimary,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 2),
+                                            Text(
+                                              '${alert.deviceName} • ${alert.description}',
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              '${alert.triggeredAt.hour.toString().padLeft(2, '0')}:${alert.triggeredAt.minute.toString().padLeft(2, '0')} • ${alert.triggeredAt.day}/${alert.triggeredAt.month}',
+                                              style: const TextStyle(fontSize: 11, color: AppTheme.textMuted),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      const Icon(Icons.arrow_forward_ios, size: 14, color: AppTheme.textMuted),
+                                    ],
+                                  ),
                                 ),
-                              ),
-                            );
-                          },
+                              );
+                            },
+                          ),
                         ),
             ),
           ],

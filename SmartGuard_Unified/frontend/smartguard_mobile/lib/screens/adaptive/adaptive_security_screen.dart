@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import '../../core/api_client.dart';
 import '../../core/app_theme.dart';
+import '../../models/models.dart';
+import '../../services/adaptive_security_service.dart';
 import '../../widgets/capybara_widgets.dart';
 
 class AdaptiveSecurityScreen extends StatefulWidget {
@@ -16,36 +17,35 @@ class _AdaptiveSecurityScreenState extends State<AdaptiveSecurityScreen> {
   bool _isSnoozing = false;
   int _remainingSeconds = 0;
   Timer? _countdownTimer;
+
+  List<AdaptiveProfileModel> _profiles = [];
   String _activeMode = 'Home';
 
   @override
   void initState() {
     super.initState();
-    _fetchStatus();
+    _fetchAdaptiveStatus();
   }
 
-  Future<void> _fetchStatus() async {
+  Future<void> _fetchAdaptiveStatus() async {
     try {
-      final res = await ApiClient.request('GET', '/api/adaptivesecurity/current-mode');
-      if (res is Map<String, dynamic> && res['currentMode'] != null) {
-        setState(() => _activeMode = res['currentMode'].toString());
-      }
-    } catch (_) {}
-  }
+      final profiles = await AdaptiveSecurityService.getProfiles();
+      setState(() {
+        _profiles = profiles;
+        final active = profiles.firstWhere((p) => p.isActive, orElse: () => profiles.first);
+        _activeMode = active.modeName;
 
-  void _startSnooze() async {
-    try {
-      await ApiClient.request('POST', '/api/adaptivesecurity/snooze', body: {
-        'durationMinutes': _selectedMinutes,
-        'reason': 'Người dùng tạm ngưng trên app',
+        // Kiểm tra xem hiện tại có đang trong thời gian Snooze không
+        if (active.snoozeUntil != null && active.snoozeUntil!.isAfter(DateTime.now())) {
+          _isSnoozing = true;
+          _remainingSeconds = active.snoozeUntil!.difference(DateTime.now()).inSeconds;
+          _startLocalCountdown();
+        }
       });
     } catch (_) {}
+  }
 
-    setState(() {
-      _isSnoozing = true;
-      _remainingSeconds = _selectedMinutes * 60;
-    });
-
+  void _startLocalCountdown() {
     _countdownTimer?.cancel();
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (!mounted) return;
@@ -60,18 +60,72 @@ class _AdaptiveSecurityScreenState extends State<AdaptiveSecurityScreen> {
     });
   }
 
-  void _cancelSnooze() {
+  Future<void> _startSnooze() async {
+    try {
+      // Gọi API POST /api/adaptivesecurity/snooze
+      final res = await AdaptiveSecurityService.snooze(_selectedMinutes);
+
+      setState(() {
+        _isSnoozing = true;
+        _remainingSeconds = _selectedMinutes * 60;
+      });
+      _startLocalCountdown();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          backgroundColor: AppTheme.primaryPurple,
+          content: Text(res['message']?.toString() ?? '🐾 Đã tạm dừng cảnh báo an ninh trong $_selectedMinutes phút.'),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Lỗi: $e'), backgroundColor: AppTheme.statusDanger),
+      );
+    }
+  }
+
+  Future<void> _cancelSnooze() async {
+    try {
+      // Gọi API POST /api/adaptivesecurity/cancel-snooze
+      await AdaptiveSecurityService.cancelSnooze();
+    } catch (_) {}
+
     _countdownTimer?.cancel();
     setState(() {
       _isSnoozing = false;
       _remainingSeconds = 0;
     });
+
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('🐾 Capybara đã tái kích hoạt bảo vệ toàn diện!'),
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        content: const Text('🐾 Capybara đã tái kích hoạt canh gác an ninh toàn diện!'),
         backgroundColor: AppTheme.statusGreen,
       ),
     );
+  }
+
+  Future<void> _selectMode(AdaptiveProfileModel profile) async {
+    try {
+      await AdaptiveSecurityService.activateProfile(profile.id);
+      setState(() => _activeMode = profile.modeName);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 2),
+          backgroundColor: AppTheme.primaryPurple,
+          content: Text('🐾 Đã chuyển sang chế độ [${profile.displayName}]'),
+        ),
+      );
+    } catch (_) {}
   }
 
   @override
@@ -97,13 +151,19 @@ class _AdaptiveSecurityScreenState extends State<AdaptiveSecurityScreen> {
           onPressed: () => Navigator.of(context).pop(),
         ),
         title: const Text('Bảo vệ thích ứng'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh, color: AppTheme.primaryPurple),
+            onPressed: _fetchAdaptiveStatus,
+          ),
+        ],
       ),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
           child: Column(
             children: [
-              // Snooze Card (Matching Mockup with Relaxed Capybara)
+              // Snooze Card
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(20),
@@ -121,7 +181,6 @@ class _AdaptiveSecurityScreenState extends State<AdaptiveSecurityScreen> {
                 ),
                 child: Column(
                   children: [
-                    // Mascot relaxing
                     Stack(
                       alignment: Alignment.center,
                       children: [
@@ -161,7 +220,6 @@ class _AdaptiveSecurityScreenState extends State<AdaptiveSecurityScreen> {
                     ),
                     const SizedBox(height: 16),
 
-                    // Duration Chips (15 phút, 30 phút, 60 phút)
                     if (!_isSnoozing)
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -193,7 +251,7 @@ class _AdaptiveSecurityScreenState extends State<AdaptiveSecurityScreen> {
 
                     const SizedBox(height: 20),
                     CapybaraGradientButton(
-                      text: _isSnoozing ? 'Hủy bỏ và kích hoạt lại' : 'Bắt đầu',
+                      text: _isSnoozing ? 'Hủy bỏ và kích hoạt lại' : 'Bắt đầu tạm dừng',
                       onPressed: _isSnoozing ? _cancelSnooze : _startSnooze,
                       gradient: _isSnoozing
                           ? const LinearGradient(colors: [Color(0xFFEF4444), Color(0xFFDC2626)])
@@ -204,39 +262,63 @@ class _AdaptiveSecurityScreenState extends State<AdaptiveSecurityScreen> {
               ),
               const SizedBox(height: 24),
 
-              // 3 Chế độ tiêu chuẩn (Home / Away / Night)
+              // Danh sách 3 Chế độ tiêu chuẩn (Home / Away / Night)
               const Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  '3 Chế độ thông minh',
+                  '3 Chế độ an ninh tiêu chuẩn',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: AppTheme.textPrimary),
                 ),
               ),
               const SizedBox(height: 10),
 
-              _buildModeCard(
-                title: 'Ở nhà (Home)',
-                description: 'Miễn trừ cảnh báo tại phòng khách & bếp, chỉ canh gác cửa chính.',
-                icon: Icons.home,
-                color: Colors.blueAccent,
-                isActive: _activeMode == 'Home',
-              ),
-              const SizedBox(height: 10),
-              _buildModeCard(
-                title: 'Rời nhà (Away)',
-                description: 'Kích hoạt toàn diện tất cả cảm biến và camera ở mọi phân vùng.',
-                icon: Icons.directions_walk,
-                color: AppTheme.warmAmber,
-                isActive: _activeMode == 'Away',
-              ),
-              const SizedBox(height: 10),
-              _buildModeCard(
-                title: 'Ban đêm (Night)',
-                description: 'Tăng độ nhạy phát hiện x1.5, còi báo động ngay khi phát hiện người lạ.',
-                icon: Icons.nightlight_round,
-                color: AppTheme.primaryPurple,
-                isActive: _activeMode == 'Night',
-              ),
+              if (_profiles.isEmpty) ...[
+                _buildModeCardStatic(
+                  title: 'Ở nhà (Home)',
+                  description: 'Miễn trừ cảnh báo tại phòng khách & bếp, chỉ canh gác cửa chính.',
+                  icon: Icons.home,
+                  color: Colors.blueAccent,
+                  isActive: _activeMode == 'Home',
+                ),
+                const SizedBox(height: 10),
+                _buildModeCardStatic(
+                  title: 'Rời nhà (Away)',
+                  description: 'Kích hoạt toàn diện tất cả cảm biến và camera ở mọi phân vùng.',
+                  icon: Icons.directions_walk,
+                  color: AppTheme.warmAmber,
+                  isActive: _activeMode == 'Away',
+                ),
+                const SizedBox(height: 10),
+                _buildModeCardStatic(
+                  title: 'Ban đêm (Night)',
+                  description: 'Tăng độ nhạy phát hiện x1.5, còi báo động ngay khi phát hiện người lạ.',
+                  icon: Icons.nightlight_round,
+                  color: AppTheme.primaryPurple,
+                  isActive: _activeMode == 'Night',
+                ),
+              ] else
+                Column(
+                  children: _profiles.map((p) {
+                    final isHome = p.modeName.toLowerCase() == 'home';
+                    final isNight = p.modeName.toLowerCase() == 'night';
+                    final color = isHome ? Colors.blueAccent : (isNight ? AppTheme.primaryPurple : AppTheme.warmAmber);
+                    final icon = isHome ? Icons.home : (isNight ? Icons.nightlight_round : Icons.directions_walk);
+
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: GestureDetector(
+                        onTap: () => _selectMode(p),
+                        child: _buildModeCardStatic(
+                          title: p.displayName,
+                          description: p.description.isNotEmpty ? p.description : 'Thời gian: ${p.activeFrom} - ${p.activeTo}',
+                          icon: icon,
+                          color: color,
+                          isActive: p.modeName.toLowerCase() == _activeMode.toLowerCase(),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
             ],
           ),
         ),
@@ -244,7 +326,7 @@ class _AdaptiveSecurityScreenState extends State<AdaptiveSecurityScreen> {
     );
   }
 
-  Widget _buildModeCard({
+  Widget _buildModeCardStatic({
     required String title,
     required String description,
     required IconData icon,
@@ -291,7 +373,7 @@ class _AdaptiveSecurityScreenState extends State<AdaptiveSecurityScreen> {
                           borderRadius: BorderRadius.circular(6),
                         ),
                         child: const Text(
-                          'Đang chọn',
+                          'Đang kích hoạt',
                           style: TextStyle(color: AppTheme.statusGreen, fontSize: 10, fontWeight: FontWeight.bold),
                         ),
                       ),

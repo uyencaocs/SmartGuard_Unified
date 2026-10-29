@@ -1,5 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../core/app_theme.dart';
+import '../models/models.dart';
+import '../services/realtime_alert_service.dart';
+import '../widgets/realtime_alert_dialog.dart';
 import 'alerts/alerts_history_screen.dart';
 import 'camera/camera_guard_screen.dart';
 import 'dashboard/dashboard_screen.dart';
@@ -16,11 +20,26 @@ class HomeShell extends StatefulWidget {
 
 class _HomeShellState extends State<HomeShell> {
   late int _currentIndex;
+  StreamSubscription<AlertModel>? _alertSubscription;
 
   @override
   void initState() {
     super.initState();
     _currentIndex = widget.initialIndex;
+
+    // Khởi động dịch vụ giám sát cảnh báo thời gian thực từ Backend
+    RealtimeAlertService().startMonitoring();
+    _alertSubscription = RealtimeAlertService().onNewAlert.listen((alert) {
+      if (mounted) {
+        RealtimeAlertDialog.show(context, alert);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _alertSubscription?.cancel();
+    super.dispose();
   }
 
   void _onTabSelect(int index) {
