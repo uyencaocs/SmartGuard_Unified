@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'core/app_config.dart';
 import 'core/app_theme.dart';
 import 'core/session_manager.dart';
+import 'screens/auth/login_screen.dart';
+import 'screens/home_shell.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -17,19 +19,12 @@ class SmartGuardApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'SmartGuard Unified',
+      title: 'SmartGuard - Capybara giữ nhà',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
-      themeMode: ThemeMode.system,
-      home: const Scaffold(
-        body: Center(
-          child: Text(
-            'Sẵn sàng thiết kế giao diện mới...',
-            style: TextStyle(fontSize: 18),
-          ),
-        ),
-      ),
+      themeMode: ThemeMode.light,
+      home: SessionManager.isLoggedIn ? const HomeShell() : const LoginScreen(),
     );
   }
 }

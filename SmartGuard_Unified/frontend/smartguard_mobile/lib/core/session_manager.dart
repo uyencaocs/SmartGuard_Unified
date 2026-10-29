@@ -17,6 +17,7 @@ class SessionManager {
   static String get username => _cachedUser?['username']?.toString() ?? 'Người dùng';
   static String get email => _cachedUser?['email']?.toString() ?? '';
   static String get userId => _cachedUser?['userId']?.toString() ?? '';
+  static String get role => _cachedUser?['role']?.toString() ?? 'Owner';
 
   static Future<void> init() async {
     try {

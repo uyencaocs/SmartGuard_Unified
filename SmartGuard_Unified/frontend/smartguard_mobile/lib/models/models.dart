@@ -108,20 +108,43 @@ class AlertModel {
   final DateTime triggeredAt;
   final DateTime? acknowledgedAt;
 
+  bool get isResolved => status.toLowerCase() != 'triggered';
+  String get alertType => triggerReason;
+  String get title {
+    if (triggerReason.contains('Face') || triggerReason.contains('Stranger')) {
+      return 'Phát hiện người lạ';
+    }
+    if (triggerReason.contains('CHUYEN_DONG') || triggerReason.contains('Motion')) {
+      return 'Phát hiện chuyển động';
+    }
+    if (triggerReason.contains('TIENG_ON') || triggerReason.contains('Noise')) {
+      return 'Âm thanh bất thường';
+    }
+    return triggerReason;
+  }
+  String get description => adaptiveReason ?? 'Cảnh báo an ninh tại $deviceName';
+  DateTime get createdAt => triggeredAt;
+  String? get evidenceImagePath => imageUrl;
+
   AlertModel({
     required this.id,
     required this.deviceId,
-    required this.deviceName,
+    this.deviceName = 'Camera',
     this.zoneName,
-    required this.triggerReason,
+    this.triggerReason = 'CHUYEN_DONG',
     this.triggerScore = 0.0,
-    required this.severity,
-    required this.status,
+    this.severity = 'Warning',
+    this.status = 'Triggered',
     this.imageUrl,
     this.adaptiveReason,
-    required this.triggeredAt,
+    DateTime? triggeredAt,
     this.acknowledgedAt,
-  });
+    String? title,
+    String? description,
+    bool? isResolved,
+    DateTime? createdAt,
+    String? alertType,
+  }) : triggeredAt = triggeredAt ?? createdAt ?? DateTime.now();
 
   factory AlertModel.fromJson(Map<String, dynamic> json) {
     return AlertModel(
@@ -150,15 +173,28 @@ class MemberModel {
   final String? deviceName;
   final bool canAcknowledge;
 
+  String get username => memberUsername;
+  String get email => memberEmail;
+  String get roleInHousehold => canAcknowledge ? 'Chủ nhà' : 'Thành viên';
+
   MemberModel({
     required this.id,
-    required this.memberUserId,
-    required this.memberEmail,
-    required this.memberUsername,
+    this.memberUserId = '',
+    String? memberEmail,
+    String? memberUsername,
     this.deviceId,
     this.deviceName,
     this.canAcknowledge = true,
-  });
+    String? ownerId,
+    String? userId,
+    String? username,
+    String? email,
+    String? roleInHousehold,
+    bool? canArmDisarm,
+    bool? canViewCameras,
+    DateTime? joinedAt,
+  })  : memberEmail = memberEmail ?? email ?? '',
+        memberUsername = memberUsername ?? username ?? '';
 
   factory MemberModel.fromJson(Map<String, dynamic> json) {
     return MemberModel(

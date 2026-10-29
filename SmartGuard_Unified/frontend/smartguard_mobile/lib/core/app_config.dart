@@ -1,3 +1,4 @@
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class AppConfig {
@@ -38,5 +39,16 @@ class AppConfig {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_prefKeyBaseUrl, trimmed);
     } catch (_) {}
+  }
+
+  static Future<bool> pingServer([String? testUrl]) async {
+    try {
+      final url = testUrl ?? _activeBaseUrl;
+      final uri = Uri.parse(url).resolve('api/devices');
+      final res = await http.get(uri).timeout(const Duration(seconds: 4));
+      return res.statusCode < 500;
+    } catch (_) {
+      return false;
+    }
   }
 }
