@@ -2,8 +2,6 @@ import 'package:flutter/material.dart';
 import 'core/app_config.dart';
 import 'core/app_theme.dart';
 import 'core/session_manager.dart';
-import 'screens/auth/welcome_screen.dart';
-import 'screens/home_shell.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -24,7 +22,14 @@ class SmartGuardApp extends StatelessWidget {
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
       themeMode: ThemeMode.system,
-      home: SessionManager.isLoggedIn ? const HomeShell() : const WelcomeScreen(),
+      home: const Scaffold(
+        body: Center(
+          child: Text(
+            'Sẵn sàng thiết kế giao diện mới...',
+            style: TextStyle(fontSize: 18),
+          ),
+        ),
+      ),
     );
   }
 }
