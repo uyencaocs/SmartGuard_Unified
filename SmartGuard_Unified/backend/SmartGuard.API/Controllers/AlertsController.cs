@@ -118,6 +118,7 @@ namespace SmartGuard.API.Controllers
             return Ok(new
             {
                 message = "Đã tiếp nhận cảnh báo thành công!",
+                id = alert.Id,
                 alertId = alert.Id,
                 status = alert.Status,
                 triggeredAt = alert.TriggeredAt,

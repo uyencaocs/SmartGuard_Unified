@@ -37,23 +37,51 @@ class DeviceModel {
   final double motionThreshold;
   final DateTime registeredAt;
   final DateTime lastSeenAt;
+  final String deviceType; // camera | sensor | doorbell | siren
+  final String location;   // Cửa chính | Phòng khách | Ban công | Sân trước | Sân sau
+
+  DateTime get createdAt => registeredAt;
 
   DeviceModel({
     required this.id,
-    required this.ownerId,
+    this.ownerId = '',
     this.zoneId,
     this.zoneName,
     required this.name,
-    required this.deviceCode,
+    this.deviceCode = '',
     this.description = '',
     this.isArmed = true,
     this.noiseThreshold = 70.0,
     this.motionThreshold = 3.5,
-    required this.registeredAt,
-    required this.lastSeenAt,
-  });
+    DateTime? registeredAt,
+    DateTime? lastSeenAt,
+    DateTime? createdAt,
+    String? deviceType,
+    this.location = 'Cửa chính',
+  })  : registeredAt = registeredAt ?? createdAt ?? DateTime.now(),
+        lastSeenAt = lastSeenAt ?? createdAt ?? DateTime.now(),
+        deviceType = deviceType ?? 'camera';
 
   factory DeviceModel.fromJson(Map<String, dynamic> json) {
+    final nameLower = (json['name']?.toString() ?? '').toLowerCase();
+    final desc = json['description']?.toString() ?? '';
+    final descLower = desc.toLowerCase();
+
+    String detectedType = 'camera';
+    if (descLower.contains('loại: doorbell') || nameLower.contains('chuông') || nameLower.contains('doorbell')) {
+      detectedType = 'doorbell';
+    } else if (descLower.contains('loại: sensor') || nameLower.contains('cảm biến') || nameLower.contains('sensor')) {
+      detectedType = 'sensor';
+    } else if (descLower.contains('loại: siren') || nameLower.contains('còi') || nameLower.contains('siren') || nameLower.contains('alarm')) {
+      detectedType = 'siren';
+    }
+
+    String? parsedLocation;
+    final locMatch = RegExp(r'Vị trí:\s*([^|]+)').firstMatch(desc);
+    if (locMatch != null) {
+      parsedLocation = locMatch.group(1)?.trim();
+    }
+
     return DeviceModel(
       id: json['id']?.toString() ?? '',
       ownerId: json['ownerId']?.toString() ?? '',
@@ -61,12 +89,14 @@ class DeviceModel {
       zoneName: json['zoneName']?.toString(),
       name: json['name']?.toString() ?? 'Thiết bị',
       deviceCode: json['deviceCode']?.toString() ?? '',
-      description: json['description']?.toString() ?? '',
+      description: desc,
       isArmed: json['isArmed'] == true,
       noiseThreshold: (json['noiseThreshold'] as num?)?.toDouble() ?? 70.0,
       motionThreshold: (json['motionThreshold'] as num?)?.toDouble() ?? 3.5,
       registeredAt: DateTime.tryParse(json['registeredAt']?.toString() ?? '') ?? DateTime.now(),
       lastSeenAt: DateTime.tryParse(json['lastSeenAt']?.toString() ?? '') ?? DateTime.now(),
+      deviceType: json['deviceType']?.toString() ?? detectedType,
+      location: json['zoneName']?.toString() ?? json['location']?.toString() ?? parsedLocation ?? 'Cửa chính',
     );
   }
 }
@@ -173,6 +203,48 @@ class MemberModel {
   }
 }
 
+class EmergencyContactModel {
+  final String id;
+  final String name;
+  final String phone;
+  final String relationship; // Bố, Mẹ, Vợ, Chồng, Con, Bạn thân, Hàng xóm
+  final bool isCallAlert;
+  final bool isSmsAlert;
+  final String? email;
+
+  EmergencyContactModel({
+    required this.id,
+    required this.name,
+    required this.phone,
+    required this.relationship,
+    this.isCallAlert = true,
+    this.isSmsAlert = true,
+    this.email,
+  });
+
+  factory EmergencyContactModel.fromJson(Map<String, dynamic> json) {
+    return EmergencyContactModel(
+      id: json['id']?.toString() ?? '',
+      name: json['name']?.toString() ?? '',
+      phone: json['phone']?.toString() ?? '',
+      relationship: json['relationship']?.toString() ?? 'Người thân',
+      isCallAlert: json['isCallAlert'] != false,
+      isSmsAlert: json['isSmsAlert'] != false,
+      email: json['email']?.toString(),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'phone': phone,
+    'relationship': relationship,
+    'isCallAlert': isCallAlert,
+    'isSmsAlert': isSmsAlert,
+    'email': email,
+  };
+}
+
 class AdaptiveZoneRuleModel {
   final String id;
   final String zoneId;
@@ -205,12 +277,12 @@ class AdaptiveZoneRuleModel {
   }
 
   Map<String, dynamic> toJson() => {
-        'zoneId': zoneId,
-        'enableMonitoring': enableMonitoring,
-        'enableAlarmSound': enableAlarmSound,
-        'enableDiscordNotification': enableDiscordNotification,
-        'customSensitivity': customSensitivity,
-      };
+    'zoneId': zoneId,
+    'enableMonitoring': enableMonitoring,
+    'enableAlarmSound': enableAlarmSound,
+    'enableDiscordNotification': enableDiscordNotification,
+    'customSensitivity': customSensitivity,
+  };
 }
 
 class AdaptiveProfileModel {

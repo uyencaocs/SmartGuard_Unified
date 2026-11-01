@@ -14,6 +14,24 @@ class ApiException implements Exception {
   String toString() => statusCode != null ? 'HTTP $statusCode: $message' : message;
 }
 
+class ConnectionCheckResult {
+  final bool ok;
+  final String url;
+  final int? statusCode;
+  final int latencyMs;
+  final String message;
+  final String? serverVersion;
+
+  const ConnectionCheckResult({
+    required this.ok,
+    required this.url,
+    required this.latencyMs,
+    required this.message,
+    this.statusCode,
+    this.serverVersion,
+  });
+}
+
 class ApiClient {
   static final http.Client _client = http.Client();
 
@@ -24,10 +42,40 @@ class ApiClient {
     Map<String, String>? queryParams,
     Duration timeout = const Duration(seconds: 15),
   }) async {
-    final baseUrl = AppConfig.baseUrl;
-    final uri = Uri.parse(baseUrl).resolve(path.startsWith('/') ? path.substring(1) : path);
+    try {
+      return await _sendRequest(
+        method,
+        path,
+        body: body,
+        queryParams: queryParams,
+        timeout: timeout,
+      );
+    } on ApiException catch (firstErr) {
+      // Nếu lỗi kết nối mạng (chưa có statusCode HTTP), thử tự động dò sang URL dự phòng 1 lần
+      if (firstErr.statusCode == null) {
+        final switched = await _trySwitchToReachableBaseUrl();
+        if (switched) {
+          return await _sendRequest(
+            method,
+            path,
+            body: body,
+            queryParams: queryParams,
+            timeout: timeout,
+          );
+        }
+      }
+      rethrow;
+    }
+  }
 
-    final finalUri = queryParams != null ? uri.replace(queryParameters: queryParams) : uri;
+  static Future<dynamic> _sendRequest(
+    String method,
+    String path, {
+    Map<String, dynamic>? body,
+    Map<String, String>? queryParams,
+    required Duration timeout,
+  }) async {
+    final finalUri = AppConfig.buildUri(path, queryParams);
 
     final headers = <String, String>{
       'Content-Type': 'application/json',
@@ -66,9 +114,15 @@ class ApiClient {
 
       return _handleResponse(response);
     } on SocketException {
-      throw const ApiException('Không thể kết nối đến máy chủ. Vui lòng kiểm tra địa chỉ IP/mạng LAN.');
+      throw ApiException(
+        'Không thể kết nối đến máy chủ (${AppConfig.baseUrl}). Vui lòng kiểm tra Backend đã bật và cấu hình IP.',
+      );
     } on TimeoutException {
-      throw const ApiException('Hết thời gian chờ phản hồi từ máy chủ.');
+      throw ApiException(
+        'Hết thời gian chờ phản hồi từ máy chủ (${AppConfig.baseUrl}).',
+      );
+    } on FormatException {
+      throw const ApiException('Địa chỉ URL máy chủ không hợp lệ.');
     } catch (e) {
       if (e is ApiException) rethrow;
       throw ApiException('Lỗi kết nối: $e');
@@ -81,8 +135,7 @@ class ApiClient {
     Map<String, String>? fields,
     Duration timeout = const Duration(seconds: 30),
   }) async {
-    final baseUrl = AppConfig.baseUrl;
-    final uri = Uri.parse(baseUrl).resolve(path.startsWith('/') ? path.substring(1) : path);
+    final uri = AppConfig.buildUri(path);
 
     final request = http.MultipartRequest('POST', uri);
 
@@ -100,10 +153,12 @@ class ApiClient {
 
     try {
       final streamedResponse = await _client.send(request).timeout(timeout);
-      final response = await http.Response.fromStream(streamedResponse);
+      final response = await http.Response.fromStream(streamedResponse).timeout(timeout);
       return _handleResponse(response);
     } on SocketException {
       throw const ApiException('Lỗi kết nối mạng khi tải ảnh lên.');
+    } on TimeoutException {
+      throw const ApiException('Hết thời gian chờ khi tải ảnh bằng chứng lên máy chủ.');
     } catch (e) {
       if (e is ApiException) rethrow;
       throw ApiException('Lỗi tải file: $e');
@@ -151,16 +206,103 @@ class ApiClient {
     throw ApiException(errorMessage, response.statusCode);
   }
 
-  static Future<bool> testConnection([String? customUrl]) async {
-    final url = customUrl ?? AppConfig.baseUrl;
+  /// Kiểm tra chi tiết kết nối tới `/api/status` của SmartGuard Backend
+  static Future<ConnectionCheckResult> testConnectionDetailed([String? customUrl]) async {
+    final normalized = AppConfig.normalizeUrl(customUrl ?? AppConfig.baseUrl);
+    final sw = Stopwatch()..start();
     try {
+      final statusUri = AppConfig.buildUri('/api/status', null, normalized);
       final res = await _client.get(
-        Uri.parse(url),
-        headers: {'X-Tunnel-Skip-AntiPhishing-Page': 'true'},
-      ).timeout(const Duration(seconds: 4));
-      return res.statusCode == 200;
-    } catch (_) {
-      return false;
+        statusUri,
+        headers: {
+          'Accept': 'application/json',
+          'X-Tunnel-Skip-AntiPhishing-Page': 'true',
+        },
+      ).timeout(const Duration(seconds: 5));
+      sw.stop();
+
+      if (res.statusCode == 200) {
+        try {
+          final json = jsonDecode(res.body);
+          if (json is Map && json['status']?.toString().toLowerCase() == 'online') {
+            final version = json['version']?.toString();
+            return ConnectionCheckResult(
+              ok: true,
+              url: normalized,
+              statusCode: 200,
+              latencyMs: sw.elapsedMilliseconds,
+              serverVersion: version,
+              message: 'Kết nối thành công tới $normalized (${sw.elapsedMilliseconds}ms)'
+                  '${version != null ? " • v$version" : ""}',
+            );
+          }
+        } catch (_) {}
+        return ConnectionCheckResult(
+          ok: true,
+          url: normalized,
+          statusCode: 200,
+          latencyMs: sw.elapsedMilliseconds,
+          message: 'Kết nối máy chủ thành công ($normalized • ${sw.elapsedMilliseconds}ms)',
+        );
+      }
+
+      return ConnectionCheckResult(
+        ok: false,
+        url: normalized,
+        statusCode: res.statusCode,
+        latencyMs: sw.elapsedMilliseconds,
+        message: 'Máy chủ phản hồi mã HTTP ${res.statusCode} tại $normalized.',
+      );
+    } on TimeoutException {
+      sw.stop();
+      return ConnectionCheckResult(
+        ok: false,
+        url: normalized,
+        latencyMs: sw.elapsedMilliseconds,
+        message: 'Quá thời gian chờ (5s) tới $normalized. Kiểm tra tường lửa hoặc IP.',
+      );
+    } on SocketException {
+      sw.stop();
+      return ConnectionCheckResult(
+        ok: false,
+        url: normalized,
+        latencyMs: sw.elapsedMilliseconds,
+        message: 'Không thể kết nối tới $normalized. Hãy đảm bảo Backend đang chạy ở cổng 5235.',
+      );
+    } catch (e) {
+      sw.stop();
+      return ConnectionCheckResult(
+        ok: false,
+        url: normalized,
+        latencyMs: sw.elapsedMilliseconds,
+        message: 'Lỗi kiểm tra kết nối ($normalized): $e',
+      );
     }
+  }
+
+  /// Kiểm tra kết nối; nếu không truyền [customUrl] và URL hiện tại thất bại,
+  /// tự động dò qua danh sách ứng viên (Localhost, Emulator 10.0.2.2, Tunnel) và lưu lại URL sống.
+  static Future<bool> testConnection([String? customUrl]) async {
+    if (customUrl != null && customUrl.trim().isNotEmpty) {
+      final result = await testConnectionDetailed(customUrl);
+      return result.ok;
+    }
+
+    final current = await testConnectionDetailed(AppConfig.baseUrl);
+    if (current.ok) return true;
+
+    return await _trySwitchToReachableBaseUrl();
+  }
+
+  static Future<bool> _trySwitchToReachableBaseUrl() async {
+    for (final candidate in AppConfig.candidateUrls) {
+      if (candidate == AppConfig.baseUrl) continue;
+      final check = await testConnectionDetailed(candidate);
+      if (check.ok) {
+        await AppConfig.setBaseUrl(check.url);
+        return true;
+      }
+    }
+    return false;
   }
 }

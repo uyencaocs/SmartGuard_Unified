@@ -8,7 +8,8 @@ import '../../core/app_theme.dart';
 import '../../models/models.dart';
 
 class AlertsHistoryScreen extends StatefulWidget {
-  const AlertsHistoryScreen({super.key});
+  final bool isTab;
+  const AlertsHistoryScreen({super.key, this.isTab = false});
 
   @override
   State<AlertsHistoryScreen> createState() => AlertsHistoryScreenState();
@@ -17,8 +18,12 @@ class AlertsHistoryScreen extends StatefulWidget {
 class AlertsHistoryScreenState extends State<AlertsHistoryScreen> {
   bool _isLoading = true;
   List<AlertModel> _alerts = [];
-  String? _errorMessage;
   Timer? _autoRefreshTimer;
+
+  String _selectedFilter = 'all'; // 'all', 'today', 'yesterday', '7days'
+  String _searchQuery = '';
+  bool _isSearchOpen = false;
+  final TextEditingController _searchCtrl = TextEditingController();
 
   static const _cacheKey = 'sg_cached_alerts';
 
@@ -39,16 +44,15 @@ class AlertsHistoryScreenState extends State<AlertsHistoryScreen> {
   @override
   void dispose() {
     _autoRefreshTimer?.cancel();
+    _searchCtrl.dispose();
     super.dispose();
   }
 
-  /// Gọi từ bên ngoài (ví dụ HomeShell khi chuyển tab sang Cảnh báo)
   void reloadAlerts() {
     _loadCachedAlerts();
     _loadAlerts();
   }
 
-  /// Tải dữ liệu lưu cache nội bộ để hiển thị ngay lập tức không bị trắng màn hình
   Future<void> _loadCachedAlerts() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -62,20 +66,21 @@ class AlertsHistoryScreenState extends State<AlertsHistoryScreen> {
     } catch (_) {}
   }
 
-  /// Gọi API lấy danh sách cảnh báo mới nhất từ máy chủ
   Future<void> _loadAlerts({bool isSilent = false}) async {
     if (!isSilent && mounted) {
       setState(() {
         _isLoading = true;
-        _errorMessage = null;
       });
     }
 
     try {
-      final res = await ApiClient.request('GET', '/api/alerts/history?limit=50') as List<dynamic>;
-      final list = res.map((e) => AlertModel.fromJson(e as Map<String, dynamic>)).toList();
+      final res =
+          await ApiClient.request('GET', '/api/alerts/history?limit=50')
+              as List<dynamic>;
+      final list = res
+          .map((e) => AlertModel.fromJson(e as Map<String, dynamic>))
+          .toList();
 
-      // Lưu vào cache local
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_cacheKey, jsonEncode(res));
 
@@ -83,16 +88,12 @@ class AlertsHistoryScreenState extends State<AlertsHistoryScreen> {
         setState(() {
           _alerts = list;
           _isLoading = false;
-          _errorMessage = null;
         });
       }
-    } catch (e) {
+    } catch (_) {
       if (mounted) {
         setState(() {
           _isLoading = false;
-          if (_alerts.isEmpty) {
-            _errorMessage = e.toString();
-          }
         });
       }
     }
@@ -100,12 +101,17 @@ class AlertsHistoryScreenState extends State<AlertsHistoryScreen> {
 
   Future<void> _acknowledgeAlert(String id, String action) async {
     try {
-      await ApiClient.request('POST', '/api/alerts/$id/action', body: {'action': action});
+      await ApiClient.request(
+        'POST',
+        '/api/alerts/$id/action',
+        body: {'action': action},
+      );
       if (!mounted) return;
 
       String actionMsg = 'Đã cập nhật trạng thái';
       if (action == 'KnownPerson') {
-        actionMsg = '✅ Đã xác nhận Người quen - Hệ thống đã tắt báo động và tạm dừng cảnh báo 3 phút';
+        actionMsg =
+            '✅ Đã xác nhận Người quen - Hệ thống đã tắt báo động và tạm dừng cảnh báo 3 phút';
       } else if (action == 'ConfirmedStranger') {
         actionMsg = '🚨 Đã xác nhận Người lạ xâm nhập!';
       } else if (action == 'Dismiss') {
@@ -115,7 +121,9 @@ class AlertsHistoryScreenState extends State<AlertsHistoryScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(actionMsg),
-          backgroundColor: action == 'ConfirmedStranger' ? AppTheme.statusAlarm : AppTheme.statusArmed,
+          backgroundColor: action == 'ConfirmedStranger'
+              ? AppTheme.statusAlarm
+              : AppTheme.statusArmed,
           duration: const Duration(seconds: 3),
         ),
       );
@@ -123,7 +131,10 @@ class AlertsHistoryScreenState extends State<AlertsHistoryScreen> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Lỗi: $e'), backgroundColor: AppTheme.statusAlarm),
+        SnackBar(
+          content: Text('Lỗi: $e'),
+          backgroundColor: AppTheme.statusAlarm,
+        ),
       );
     }
   }
@@ -132,25 +143,51 @@ class AlertsHistoryScreenState extends State<AlertsHistoryScreen> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Chi tiết sự kiện: ${alert.triggerReason}'),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            const Icon(Icons.shield_outlined, color: AppTheme.coralPink),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                alert.triggerReason,
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
+              ),
+            ),
+          ],
+        ),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Thiết bị: ${alert.deviceName}'),
+              Text(
+                'Thiết bị: ${alert.deviceName}',
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
               const SizedBox(height: 4),
-              Text('Thời gian: ${alert.triggeredAt.toLocal().toString().substring(0, 19)}'),
+              Text(
+                'Thời gian: ${alert.triggeredAt.toLocal().toString().substring(0, 19)}',
+                style: const TextStyle(
+                  color: AppTheme.textSecondary,
+                  fontSize: 12,
+                ),
+              ),
               const SizedBox(height: 4),
-              Text('Trạng thái hiện tại: ${_statusLabel(alert.status)}'),
-              if (alert.adaptiveReason != null && alert.adaptiveReason!.isNotEmpty) ...[
-                const SizedBox(height: 4),
-                Text('Lý do thích ứng: ${alert.adaptiveReason}', style: const TextStyle(fontSize: 12, color: Colors.grey)),
-              ],
+              Text(
+                'Trạng thái: ${_statusLabel(alert.status)}',
+                style: TextStyle(
+                  color: _statusColor(alert.status),
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
               const SizedBox(height: 12),
               if (alert.imageUrl != null && alert.imageUrl!.isNotEmpty)
                 ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(12),
                   child: Image.network(
                     '${AppConfig.baseUrl}${alert.imageUrl}',
                     height: 180,
@@ -158,16 +195,32 @@ class AlertsHistoryScreenState extends State<AlertsHistoryScreen> {
                     fit: BoxFit.cover,
                     errorBuilder: (_, __, ___) => Container(
                       height: 120,
-                      color: Colors.grey.shade200,
-                      child: const Center(child: Text('Không thể tải ảnh bằng chứng')),
+                      decoration: BoxDecoration(
+                        color: AppTheme.creamBg,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Center(
+                        child: Text('Không thể tải ảnh bằng chứng'),
+                      ),
                     ),
                   ),
                 )
               else
                 Container(
-                  height: 80,
-                  color: Colors.grey.shade100,
-                  child: const Center(child: Text('Không có ảnh đính kèm')),
+                  height: 90,
+                  decoration: BoxDecoration(
+                    color: AppTheme.creamBg,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Center(
+                    child: Text(
+                      'Không có hình ảnh đính kèm',
+                      style: TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
                 ),
             ],
           ),
@@ -178,12 +231,18 @@ class AlertsHistoryScreenState extends State<AlertsHistoryScreen> {
               Navigator.pop(ctx);
               _acknowledgeAlert(alert.id, 'Dismiss');
             },
-            child: const Text('Bỏ qua'),
+            child: const Text(
+              'Bỏ qua',
+              style: TextStyle(color: AppTheme.textSecondary),
+            ),
           ),
           ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
               backgroundColor: AppTheme.statusArmed,
               foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
             ),
             onPressed: () {
               Navigator.pop(ctx);
@@ -194,8 +253,11 @@ class AlertsHistoryScreenState extends State<AlertsHistoryScreen> {
           ),
           ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.statusAlarm,
+              backgroundColor: AppTheme.coralPink,
               foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
             ),
             onPressed: () {
               Navigator.pop(ctx);
@@ -211,74 +273,272 @@ class AlertsHistoryScreenState extends State<AlertsHistoryScreen> {
 
   String _statusLabel(String status) {
     switch (status) {
-      case 'KnownPerson': return 'Người quen';
-      case 'ConfirmedStranger': return 'Người lạ';
-      case 'Muted': return 'Đã tắt chuông';
-      case 'Confirmed': return 'Đã duyệt';
-      case 'Dismissed': return 'Đã bỏ qua';
-      default: return 'Mới';
+      case 'KnownPerson':
+        return 'Người quen';
+      case 'ConfirmedStranger':
+        return 'Người lạ';
+      case 'Muted':
+        return 'Đã tắt chuông';
+      case 'Confirmed':
+        return 'Đã duyệt';
+      case 'Dismissed':
+        return 'Đã bỏ qua';
+      default:
+        return 'Mới';
     }
   }
 
   Color _statusColor(String status) {
     switch (status) {
       case 'KnownPerson':
-      case 'Confirmed': return AppTheme.statusArmed;
+      case 'Confirmed':
+        return AppTheme.statusArmed;
       case 'Dismissed':
-      case 'Muted': return const Color(0xFF64748B);
-      default: return AppTheme.statusAlarm;
+      case 'Muted':
+        return const Color(0xFF64748B);
+      default:
+        return AppTheme.coralPink;
     }
+  }
+
+  List<AlertModel> get _filteredAlerts {
+    final now = DateTime.now();
+    return _alerts.where((a) {
+      if (_searchQuery.isNotEmpty) {
+        final q = _searchQuery.toLowerCase();
+        final match =
+            a.triggerReason.toLowerCase().contains(q) ||
+            a.deviceName.toLowerCase().contains(q);
+        if (!match) return false;
+      }
+
+      final date = a.triggeredAt.toLocal();
+      if (_selectedFilter == 'today') {
+        return date.year == now.year &&
+            date.month == now.month &&
+            date.day == now.day;
+      } else if (_selectedFilter == 'yesterday') {
+        final yesterday = now.subtract(const Duration(days: 1));
+        return date.year == yesterday.year &&
+            date.month == yesterday.month &&
+            date.day == yesterday.day;
+      } else if (_selectedFilter == '7days') {
+        return now.difference(date).inDays <= 7;
+      }
+      return true;
+    }).toList();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Lịch sử cảnh báo'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: () => _loadAlerts(),
-            tooltip: 'Làm mới lịch sử',
-          ),
-        ],
-      ),
-      body: RefreshIndicator(
-        onRefresh: () => _loadAlerts(),
-        child: _buildBody(),
+      backgroundColor: AppTheme.creamBg,
+      body: SafeArea(
+        child: Column(
+          children: [
+            // Top App Bar matching Mockup "LỊCH SỬ CẢNH BÁO"
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: [
+                      if (!widget.isTab && Navigator.of(context).canPop())
+                        IconButton(
+                          icon: const Icon(
+                            Icons.arrow_back,
+                            color: AppTheme.textPrimary,
+                          ),
+                          onPressed: () => Navigator.pop(context),
+                        )
+                      else
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: AppTheme.borderWarm),
+                          ),
+                          child: const Icon(
+                            Icons.access_time_filled,
+                            color: AppTheme.coralPink,
+                            size: 20,
+                          ),
+                        ),
+                      const SizedBox(width: 10),
+                      const Text(
+                        'Lịch sử',
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                          color: AppTheme.textPrimary,
+                        ),
+                      ),
+                    ],
+                  ),
+                  Row(
+                    children: [
+                      IconButton(
+                        icon: Icon(
+                          _isSearchOpen ? Icons.close : Icons.search,
+                          color: AppTheme.textPrimary,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            _isSearchOpen = !_isSearchOpen;
+                            if (!_isSearchOpen) {
+                              _searchQuery = '';
+                              _searchCtrl.clear();
+                            }
+                          });
+                        },
+                      ),
+                      IconButton(
+                        icon: const Icon(
+                          Icons.refresh,
+                          color: AppTheme.textPrimary,
+                        ),
+                        onPressed: () => _loadAlerts(),
+                        tooltip: 'Làm mới',
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+
+            // Search bar input (toggleable)
+            if (_isSearchOpen)
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 4,
+                ),
+                child: TextField(
+                  controller: _searchCtrl,
+                  autofocus: true,
+                  decoration: InputDecoration(
+                    hintText: 'Tìm sự kiện, tên camera...',
+                    prefixIcon: const Icon(Icons.search, size: 20),
+                    contentPadding: const EdgeInsets.symmetric(
+                      vertical: 8,
+                      horizontal: 16,
+                    ),
+                    filled: true,
+                    fillColor: Colors.white,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(20),
+                      borderSide: const BorderSide(color: AppTheme.borderWarm),
+                    ),
+                  ),
+                  onChanged: (val) => setState(() => _searchQuery = val.trim()),
+                ),
+              ),
+
+            // Filter Chips matching Mockup: [Tất cả], [Hôm nay], [Hôm qua], [7 ngày]
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              child: Row(
+                children: [
+                  _buildFilterChip('Tất cả', 'all'),
+                  const SizedBox(width: 8),
+                  _buildFilterChip('Hôm nay', 'today'),
+                  const SizedBox(width: 8),
+                  _buildFilterChip('Hôm qua', 'yesterday'),
+                  const SizedBox(width: 8),
+                  _buildFilterChip('7 ngày', '7days'),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 6),
+
+            // Main List Section
+            Expanded(
+              child: RefreshIndicator(
+                onRefresh: () => _loadAlerts(),
+                child: _buildAlertsList(),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildBody() {
+  Widget _buildFilterChip(String label, String key) {
+    final isSelected = _selectedFilter == key;
+    return GestureDetector(
+      onTap: () => setState(() => _selectedFilter = key),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFF5B44BA) : Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isSelected ? const Color(0xFF5B44BA) : AppTheme.borderWarm,
+          ),
+          boxShadow: isSelected
+              ? [
+                  BoxShadow(
+                    color: const Color(0xFF5B44BA).withValues(alpha: 0.3),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  ),
+                ]
+              : null,
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: isSelected ? Colors.white : AppTheme.textSecondary,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+            fontSize: 13,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAlertsList() {
     if (_isLoading && _alerts.isEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
 
-    if (_errorMessage != null && _alerts.isEmpty) {
+    final displayList = _filteredAlerts;
+
+    if (displayList.isEmpty) {
       return Center(
         child: Padding(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(32),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.cloud_off_outlined, size: 48, color: Color(0xFF94A3B8)),
-              const SizedBox(height: 12),
-              const Text(
-                'Không thể tải lịch sử cảnh báo',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                _errorMessage!,
-                style: const TextStyle(color: Color(0xFF64748B), fontSize: 12),
-                textAlign: TextAlign.center,
+              Image.asset(
+                'assets/images/sticker_system(2).png',
+                height: 120,
+                errorBuilder: (_, __, ___) => const Icon(
+                  Icons.shield_outlined,
+                  size: 64,
+                  color: AppTheme.textSecondary,
+                ),
               ),
               const SizedBox(height: 16),
-              ElevatedButton.icon(
-                onPressed: () => _loadAlerts(),
-                icon: const Icon(Icons.refresh),
-                label: const Text('Thử lại'),
+              const Text(
+                'Không có cảnh báo nào',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: AppTheme.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Mọi thứ đều an toàn và bình yên dưới sự bảo vệ của Capybara!',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13, color: AppTheme.textSecondary),
               ),
             ],
           ),
@@ -286,88 +546,266 @@ class AlertsHistoryScreenState extends State<AlertsHistoryScreen> {
       );
     }
 
-    if (_alerts.isEmpty) {
-      return const Center(
-        child: Text(
-          'Chưa có sự kiện cảnh báo nào được ghi nhận.',
-          style: TextStyle(color: Color(0xFF64748B)),
-        ),
-      );
+    // Nhóm theo ngày: Hôm nay, Hôm qua, hoặc ngày tháng
+    final now = DateTime.now();
+    final todayAlerts = <AlertModel>[];
+    final yesterdayAlerts = <AlertModel>[];
+    final earlierAlerts = <AlertModel>[];
+
+    for (final a in displayList) {
+      final date = a.triggeredAt.toLocal();
+      if (date.year == now.year &&
+          date.month == now.month &&
+          date.day == now.day) {
+        todayAlerts.add(a);
+      } else if (date.year == now.year &&
+          date.month == now.month &&
+          date.day == now.day - 1) {
+        yesterdayAlerts.add(a);
+      } else {
+        earlierAlerts.add(a);
+      }
     }
 
-    return Column(
+    return ListView(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       children: [
-        if (_errorMessage != null)
-          Container(
-            color: AppTheme.statusAlarm.withValues(alpha: 0.1),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Row(
+        if (todayAlerts.isNotEmpty) ...[
+          _buildGroupHeader('Hôm nay - ${_formatHeaderDate(now)}'),
+          ...todayAlerts.map((a) => _buildAlertCard(a)),
+          const SizedBox(height: 12),
+        ],
+        if (yesterdayAlerts.isNotEmpty) ...[
+          _buildGroupHeader(
+            'Hôm qua - ${_formatHeaderDate(now.subtract(const Duration(days: 1)))}',
+          ),
+          ...yesterdayAlerts.map((a) => _buildAlertCard(a)),
+          const SizedBox(height: 12),
+        ],
+        if (earlierAlerts.isNotEmpty) ...[
+          _buildGroupHeader('Các ngày trước'),
+          ...earlierAlerts.map((a) => _buildAlertCard(a)),
+          const SizedBox(height: 12),
+        ],
+
+        // Cute Capybara postman illustration at the bottom of the history list (from mockup!)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          child: Center(
+            child: Column(
               children: [
-                const Icon(Icons.warning_amber_rounded, color: AppTheme.statusAlarm, size: 18),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Đang hiển thị dữ liệu cache. $_errorMessage',
-                    style: const TextStyle(fontSize: 12, color: AppTheme.statusAlarm),
+                Image.asset(
+                  'assets/images/sticker_system(2).png',
+                  height: 90,
+                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Capybara luôn túc trực bảo vệ 24/7 🐾',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppTheme.textSecondary,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
               ],
             ),
           ),
-        Expanded(
-          child: ListView.separated(
-            padding: const EdgeInsets.all(16),
-            itemCount: _alerts.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 10),
-            itemBuilder: (context, index) {
-              final alert = _alerts[index];
-              final isCritical = alert.severity.toLowerCase() == 'critical';
-              final statusLabel = _statusLabel(alert.status);
-              final statusClr = _statusColor(alert.status);
-
-              return Card(
-                child: ListTile(
-                  onTap: () => _showEvidenceDialog(alert),
-                  leading: CircleAvatar(
-                    backgroundColor: isCritical
-                        ? AppTheme.statusAlarm.withValues(alpha: 0.15)
-                        : AppTheme.statusWarning.withValues(alpha: 0.15),
-                    child: Icon(
-                      isCritical ? Icons.warning_rounded : Icons.info_outline,
-                      color: isCritical ? AppTheme.statusAlarm : AppTheme.statusWarning,
-                    ),
-                  ),
-                  title: Text(
-                    alert.triggerReason == 'NGUOI_LA'
-                        ? 'Phát hiện Người lạ'
-                        : (alert.triggerReason == 'RUNG_LAC' ? 'Cảnh báo Rung lắc thiết bị' : alert.triggerReason),
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                  ),
-                  subtitle: Text(
-                    '${alert.deviceName} • ${alert.triggeredAt.toLocal().toString().substring(0, 19)}',
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                  trailing: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: statusClr.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(
-                      statusLabel,
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: statusClr,
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
         ),
       ],
     );
+  }
+
+  Widget _buildGroupHeader(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 4, bottom: 8, top: 4),
+      child: Text(
+        title,
+        style: const TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.bold,
+          color: AppTheme.textSecondary,
+        ),
+      ),
+    );
+  }
+
+  String _formatHeaderDate(DateTime dt) {
+    final d = dt.day.toString().padLeft(2, '0');
+    final m = dt.month.toString().padLeft(2, '0');
+    return '$d/$m/${dt.year}';
+  }
+
+  Widget _buildAlertCard(AlertModel alert) {
+    final iconData = _iconForAlert(alert.triggerReason);
+    final iconBgColor = _iconBgForAlert(alert.triggerReason);
+    final iconColor = _iconColorForAlert(alert.triggerReason);
+    final timeStr = alert.triggeredAt.toLocal().toString().substring(11, 16);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppTheme.borderWarm),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: () => _showEvidenceDialog(alert),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: [
+                // Event colored circular icon
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: iconBgColor,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(iconData, color: iconColor, size: 22),
+                ),
+                const SizedBox(width: 12),
+
+                // Event info
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _friendlyReason(alert.triggerReason),
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: AppTheme.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Row(
+                        children: [
+                          Text(
+                            alert.deviceName.isNotEmpty
+                                ? alert.deviceName
+                                : 'Camera cửa chính',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppTheme.textSecondary,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          const Text(
+                            '•',
+                            style: TextStyle(
+                              color: AppTheme.textSecondary,
+                              fontSize: 10,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            timeStr,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppTheme.textSecondary,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Right thumbnail
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Container(
+                    width: 52,
+                    height: 42,
+                    color: const Color(0xFFF1F5F9),
+                    child: alert.imageUrl != null && alert.imageUrl!.isNotEmpty
+                        ? Image.network(
+                            '${AppConfig.baseUrl}${alert.imageUrl}',
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) =>
+                                Icon(iconData, color: iconColor, size: 20),
+                          )
+                        : Icon(iconData, color: iconColor, size: 20),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _friendlyReason(String raw) {
+    if (raw.contains('PHAT_HIEN_NGUOI_LA') ||
+        raw.toLowerCase().contains('stranger')) {
+      return 'Phát hiện người lạ';
+    } else if (raw.contains('RUNG_LAC') ||
+        raw.toLowerCase().contains('motion')) {
+      return 'Phát hiện chuyển động';
+    } else if (raw.contains('AM_THANH') ||
+        raw.toLowerCase().contains('sound')) {
+      return 'Âm thanh bất thường';
+    } else if (raw.contains('KHOI_DONG') ||
+        raw.toLowerCase().contains('system')) {
+      return 'Hệ thống khởi động';
+    }
+    return raw;
+  }
+
+  IconData _iconForAlert(String reason) {
+    if (reason.contains('NGUOI_LA') ||
+        reason.toLowerCase().contains('stranger')) {
+      return Icons.person_pin_circle;
+    } else if (reason.contains('RUNG_LAC') ||
+        reason.toLowerCase().contains('motion')) {
+      return Icons.directions_run;
+    } else if (reason.contains('AM_THANH') ||
+        reason.toLowerCase().contains('sound')) {
+      return Icons.graphic_eq;
+    }
+    return Icons.settings_power;
+  }
+
+  Color _iconColorForAlert(String reason) {
+    if (reason.contains('NGUOI_LA') ||
+        reason.toLowerCase().contains('stranger')) {
+      return AppTheme.coralPink;
+    } else if (reason.contains('RUNG_LAC') ||
+        reason.toLowerCase().contains('motion')) {
+      return const Color(0xFF10B981);
+    } else if (reason.contains('AM_THANH') ||
+        reason.toLowerCase().contains('sound')) {
+      return AppTheme.royalPurple;
+    }
+    return const Color(0xFF3B82F6);
+  }
+
+  Color _iconBgForAlert(String reason) {
+    if (reason.contains('NGUOI_LA') ||
+        reason.toLowerCase().contains('stranger')) {
+      return const Color(0xFFFFECE8);
+    } else if (reason.contains('RUNG_LAC') ||
+        reason.toLowerCase().contains('motion')) {
+      return const Color(0xFFE8F5E9);
+    } else if (reason.contains('AM_THANH') ||
+        reason.toLowerCase().contains('sound')) {
+      return const Color(0xFFF3E8FF);
+    }
+    return const Color(0xFFEFF6FF);
   }
 }

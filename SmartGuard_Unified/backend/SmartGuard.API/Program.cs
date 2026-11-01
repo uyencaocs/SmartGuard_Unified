@@ -13,12 +13,16 @@ using SmartGuard.API.Services.Security;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 1. Cấu hình Database EF Core (SQL Server)
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
+// 1. Cấu hình Database EF Core (SQL Server) với timeout ngắn để tránh treo ứng dụng
+var rawConnectionString = builder.Configuration.GetConnectionString("DefaultConnection")
     ?? "Server=DESKTOP-IIQVP6N;Database=SmartGuard_Unified_DB;Trusted_Connection=True;TrustServerCertificate=True;";
+var connectionString = rawConnectionString.Contains("Connect Timeout=", StringComparison.OrdinalIgnoreCase)
+    ? rawConnectionString
+    : $"{rawConnectionString.TrimEnd(';')};Connect Timeout=5;";
 
 builder.Services.AddDbContext<SmartGuardDbContext>(options =>
-    options.UseSqlServer(connectionString, sql => sql.EnableRetryOnFailure()));
+    options.UseSqlServer(connectionString, sql =>
+        sql.EnableRetryOnFailure(maxRetryCount: 2, maxRetryDelay: TimeSpan.FromSeconds(2), errorNumbersToAdd: null)));
 
 // 2. Cấu hình Dependency Injection Services
 builder.Services.Configure<TokenOptions>(builder.Configuration.GetSection(TokenOptions.SectionName));
@@ -133,40 +137,42 @@ builder.Services.AddSwaggerGen(c =>
 
 var app = builder.Build();
 
-// 7. Khởi tạo Database & Seed dữ liệu Admin ban đầu
-using (var scope = app.Services.CreateScope())
+// 7. Khởi tạo Database & Seed dữ liệu Admin ban đầu ở luồng nền sau khi Kestrel sẵn sàng
+app.Lifetime.ApplicationStarted.Register(() =>
 {
-    var services = scope.ServiceProvider;
-    var logger = services.GetRequiredService<ILogger<Program>>();
-    var db = services.GetRequiredService<SmartGuardDbContext>();
-    var tokenService = services.GetRequiredService<ITokenService>();
-
-    try
+    _ = Task.Run(async () =>
     {
-        // Tự động áp dụng các Migration chưa chạy thay vì dùng EnsureCreated
-        await db.Database.MigrateAsync();
+        using var scope = app.Services.CreateScope();
+        var services = scope.ServiceProvider;
+        var logger = services.GetRequiredService<ILogger<Program>>();
+        var db = services.GetRequiredService<SmartGuardDbContext>();
+        var tokenService = services.GetRequiredService<ITokenService>();
 
-        // Seed tài khoản Admin mặc định nếu chưa có
-        if (!await db.Users.AnyAsync(u => u.Role == "Admin"))
+        try
         {
-            var defaultAdmin = new User
+            await db.Database.MigrateAsync();
+
+            if (!await db.Users.AnyAsync(u => u.Role == "Admin"))
             {
-                Email = "admin@smartguard.local",
-                Username = "admin",
-                PasswordHash = tokenService.HashPassword("Admin123@"),
-                Role = "Admin",
-                EmailVerified = true
-            };
-            db.Users.Add(defaultAdmin);
-            await db.SaveChangesAsync();
-            logger.LogInformation("✅ Đã khởi tạo tài khoản quản trị mặc định: admin@smartguard.local / Admin123@");
+                var defaultAdmin = new User
+                {
+                    Email = "admin@smartguard.local",
+                    Username = "admin",
+                    PasswordHash = tokenService.HashPassword("Admin123@"),
+                    Role = "Admin",
+                    EmailVerified = true
+                };
+                db.Users.Add(defaultAdmin);
+                await db.SaveChangesAsync();
+                logger.LogInformation("✅ Đã khởi tạo tài khoản quản trị mặc định: admin@smartguard.local / Admin123@");
+            }
         }
-    }
-    catch (Exception ex)
-    {
-        logger.LogError(ex, "Lỗi trong quá trình khởi tạo CSDL.");
-    }
-}
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Lỗi trong quá trình khởi tạo CSDL.");
+        }
+    });
+});
 
 // 8. Cấu hình HTTP Pipeline
 if (app.Environment.IsDevelopment())
@@ -180,7 +186,10 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseCors("AllowAll");
-app.UseStaticFiles(); // Cho phép truy cập ảnh bằng chứng tại /evidence/...
+
+// Cho phép load trang chủ index.html mặc định và tài nguyên tĩnh Web Dashboard Capybara Security
+app.UseDefaultFiles();
+app.UseStaticFiles(); // Cho phép truy cập ảnh bằng chứng tại /evidence/... và Web Dashboard Capybara Security
 
 app.UseRateLimiter();
 app.UseAuthentication();
@@ -188,11 +197,11 @@ app.UseAuthorization();
 
 app.MapControllers();
 
-app.MapGet("/", () => Results.Ok(new
+app.MapGet("/api/status", () => Results.Ok(new
 {
-    service = "SmartGuard Unified Security API",
+    service = "SmartGuard Unified Security API - Capybara Edition",
     status = "Online",
-    version = "1.0.0",
+    version = "2.5.0-capy",
     docs = "/swagger"
 }));
 

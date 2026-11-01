@@ -11,6 +11,7 @@ namespace SmartGuard.API.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
+    [Route("api/adaptive")]
     [Authorize]
     public class AdaptiveSecurityController : ControllerBase
     {

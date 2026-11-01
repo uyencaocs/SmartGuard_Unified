@@ -8,8 +8,14 @@ namespace SmartGuard.API.Services.Discord
         public ulong ChannelId { get; set; } = 0;
         public string WebhookUrl { get; set; } = string.Empty;
 
-        public bool IsBotConfigured => !string.IsNullOrWhiteSpace(BotToken) && ChannelId != 0;
-        public bool IsWebhookConfigured => !string.IsNullOrWhiteSpace(WebhookUrl);
+        public bool IsBotConfigured =>
+            !string.IsNullOrWhiteSpace(BotToken) &&
+            !BotToken.Equals("chuoimakhoa", StringComparison.OrdinalIgnoreCase) &&
+            BotToken.Length > 30 &&
+            ChannelId != 0;
+        public bool IsWebhookConfigured =>
+            !string.IsNullOrWhiteSpace(WebhookUrl) &&
+            WebhookUrl.StartsWith("https://discord.com/api/webhooks/", StringComparison.OrdinalIgnoreCase);
     }
 
     public interface IDiscordAlertService

@@ -39,12 +39,12 @@ namespace SmartGuard.API.Services.Email
 
         public async Task<bool> SendOtpEmailAsync(string toEmail, string otpCode, string purpose)
         {
-            if (!_options.IsConfigured)
+            // Tài khoản nội bộ (.local) hoặc chưa cấu hình SMTP → in trực tiếp ra log không cần kết nối mạng
+            if (!_options.IsConfigured || toEmail.EndsWith(".local", StringComparison.OrdinalIgnoreCase))
             {
-                // Development fallback: Log OTP directly to console for instant developer testing
-                _logger.LogWarning("⚠️ [DEV MODE] SMTP chưa cấu hình. Mã OTP cho {Email} [{Purpose}] là: >>> {Code} <<< (Hạn 5 phút)",
+                _logger.LogWarning("⚠️ [DEV/LOCAL OTP] Mã OTP cho {Email} [{Purpose}] là: >>> {Code} <<< (Hạn 5 phút)",
                     toEmail, purpose, otpCode);
-                return true;
+                return false;
             }
 
             try
@@ -69,7 +69,7 @@ namespace SmartGuard.API.Services.Email
 
                 message.Body = bodyBuilder.ToMessageBody();
 
-                using var client = new SmtpClient();
+                using var client = new SmtpClient { Timeout = 4000 };
                 await client.ConnectAsync(_options.Host, _options.Port, MailKit.Security.SecureSocketOptions.StartTls);
                 await client.AuthenticateAsync(_options.Email, _options.Password);
                 await client.SendAsync(message);
@@ -80,7 +80,7 @@ namespace SmartGuard.API.Services.Email
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Lỗi gửi email OTP tới {Email}", toEmail);
+                _logger.LogWarning(ex, "⚠️ Không gửi được email OTP tới {Email}. Mã OTP dự phòng: >>> {Code} <<<", toEmail, otpCode);
                 return false;
             }
         }

@@ -27,38 +27,44 @@ namespace SmartGuard.API.Services.Discord
             _serviceProvider = serviceProvider;
         }
 
-        public async Task StartAsync(CancellationToken cancellationToken)
+        public Task StartAsync(CancellationToken cancellationToken)
         {
             if (!_options.IsBotConfigured)
             {
-                _logger.LogInformation("Discord BotToken hoặc ChannelId chưa cấu hình. Hệ thống sẽ hoạt động ở chế độ Webhook Fallback nếu có WebhookUrl.");
+                _logger.LogInformation("Discord BotToken chưa cấu hình hợp lệ. Hệ thống sẽ dùng chế độ Webhook Fallback nếu có WebhookUrl.");
                 if (_options.IsWebhookConfigured)
                     _logger.LogInformation("✅ Webhook URL đã được cấu hình - sẽ dùng Webhook để gửi cảnh báo Discord.");
-                return;
+                return Task.CompletedTask;
             }
 
-            try
+            // Khởi chạy kết nối Discord ở luồng nền để không bao giờ chặn Kestrel HTTP Server khởi động
+            _ = Task.Run(async () =>
             {
-                var socketConfig = new DiscordSocketConfig
+                try
                 {
-                    GatewayIntents = GatewayIntents.Guilds | GatewayIntents.GuildMessages,
-                    AlwaysDownloadUsers = false,
-                    LogLevel = LogSeverity.Info
-                };
+                    var socketConfig = new DiscordSocketConfig
+                    {
+                        GatewayIntents = GatewayIntents.Guilds | GatewayIntents.GuildMessages,
+                        AlwaysDownloadUsers = false,
+                        LogLevel = LogSeverity.Info
+                    };
 
-                _client = new DiscordSocketClient(socketConfig);
-                _client.Log += OnLogAsync;
-                _client.Ready += OnReadyAsync;
-                _client.ButtonExecuted += OnButtonExecutedAsync;
+                    _client = new DiscordSocketClient(socketConfig);
+                    _client.Log += OnLogAsync;
+                    _client.Ready += OnReadyAsync;
+                    _client.ButtonExecuted += OnButtonExecutedAsync;
 
-                await _client.LoginAsync(TokenType.Bot, _options.BotToken);
-                await _client.StartAsync();
-                _logger.LogInformation("Đang kết nối Discord Socket Client...");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Không thể kết nối Discord Gateway. Sẽ fallback sang Webhook.");
-            }
+                    await _client.LoginAsync(TokenType.Bot, _options.BotToken);
+                    await _client.StartAsync();
+                    _logger.LogInformation("Đang kết nối Discord Socket Client...");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Không thể kết nối Discord Gateway. Sẽ fallback sang Webhook.");
+                }
+            }, cancellationToken);
+
+            return Task.CompletedTask;
         }
 
         public async Task StopAsync(CancellationToken cancellationToken)

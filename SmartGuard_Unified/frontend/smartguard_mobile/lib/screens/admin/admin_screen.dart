@@ -20,6 +20,7 @@ class _AdminScreenState extends State<AdminScreen>
   Map<String, dynamic>? _stats;
   Map<String, dynamic>? _systemInfo;
   List<UserModel> _users = [];
+  List<DeviceModel> _devices = [];
   List<ImageItemModel> _images = [];
   List<KnownPersonModel> _knownPersons = [];
   String _userSearchQuery = '';
@@ -27,7 +28,7 @@ class _AdminScreenState extends State<AdminScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
     _loadAdminData();
     _loadKnownPersons();
   }
@@ -56,6 +57,12 @@ class _AdminScreenState extends State<AdminScreen>
             .toList();
       } catch (_) {}
 
+      List<DeviceModel> devList = [];
+      try {
+        final devRes = await ApiClient.request('GET', '/api/devices') as List<dynamic>;
+        devList = devRes.map((e) => DeviceModel.fromJson(e as Map<String, dynamic>)).toList();
+      } catch (_) {}
+
       if (mounted) {
         setState(() {
           _stats = statsRes as Map<String, dynamic>?;
@@ -64,6 +71,7 @@ class _AdminScreenState extends State<AdminScreen>
               .map((e) => UserModel.fromJson(e as Map<String, dynamic>))
               .toList();
           _images = imgList;
+          _devices = devList;
           _isLoading = false;
         });
       }
@@ -722,8 +730,25 @@ class _AdminScreenState extends State<AdminScreen>
     }).toList();
 
     return Scaffold(
+      backgroundColor: AppTheme.creamBg,
       appBar: AppBar(
-        title: const Text('Quản trị hệ thống (Admin)'),
+        backgroundColor: Colors.white,
+        foregroundColor: AppTheme.textPrimary,
+        elevation: 0,
+        title: Row(
+          children: [
+            Image.asset(
+              'assets/images/3bc65821-0388-43aa-aba6-16fc6a3912a4.png',
+              height: 32,
+              errorBuilder: (_, __, ___) => const Icon(Icons.admin_panel_settings, color: Color(0xFF7C3AED)),
+            ),
+            const SizedBox(width: 8),
+            const Text(
+              'Quản trị hệ thống (Admin)',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+            ),
+          ],
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -733,10 +758,14 @@ class _AdminScreenState extends State<AdminScreen>
         ],
         bottom: TabBar(
           controller: _tabController,
-          indicatorColor: Colors.white,
+          indicatorColor: const Color(0xFF7C3AED),
+          labelColor: const Color(0xFF7C3AED),
+          unselectedLabelColor: AppTheme.textSecondary,
+          isScrollable: true,
           tabs: const [
             Tab(icon: Icon(Icons.manage_accounts), text: 'Tài khoản'),
-            Tab(icon: Icon(Icons.photo_library), text: 'Ảnh & Người quen'),
+            Tab(icon: Icon(Icons.devices_other), text: 'Thiết bị IoT'),
+            Tab(icon: Icon(Icons.photo_library), text: 'Ảnh & Khuôn mặt'),
             Tab(icon: Icon(Icons.analytics_outlined), text: 'Hệ thống'),
           ],
         ),
@@ -746,18 +775,16 @@ class _AdminScreenState extends State<AdminScreen>
           : TabBarView(
               controller: _tabController,
               children: [
-
                 _buildUsersTab(filteredUsers),
-
-
+                _buildDevicesTab(),
                 _buildImagesAndKnownPersonsTab(),
-
-                // TAB 3: Thông tin máy chủ & Thống kê
                 _buildSystemTab(),
               ],
             ),
       floatingActionButton: _tabController.index == 0
           ? FloatingActionButton.extended(
+              backgroundColor: const Color(0xFF7C3AED),
+              foregroundColor: Colors.white,
               onPressed: _showAddUserDialog,
               icon: const Icon(Icons.person_add),
               label: const Text('Thêm tài khoản'),
@@ -1035,6 +1062,148 @@ class _AdminScreenState extends State<AdminScreen>
                               'Xóa tài khoản',
                               style: TextStyle(color: AppTheme.statusAlarm),
                             ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }),
+          const SizedBox(height: 60),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDevicesTab() {
+    final cameraCount = _devices.where((d) => d.deviceType.toLowerCase() == 'camera').length;
+    final sensorCount = _devices.where((d) => d.deviceType.toLowerCase() == 'sensor').length;
+    final armedCount = _devices.where((d) => d.isArmed).length;
+
+    return RefreshIndicator(
+      onRefresh: _loadAdminData,
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Row(
+            children: [
+              Expanded(child: _buildMiniStat('Tổng thiết bị', '${_devices.length}', Icons.devices, AppTheme.coralPink)),
+              const SizedBox(width: 8),
+              Expanded(child: _buildMiniStat('Camera', '$cameraCount', Icons.videocam, AppTheme.royalPurple)),
+              const SizedBox(width: 8),
+              Expanded(child: _buildMiniStat('Cảm biến', '$sensorCount', Icons.sensors, const Color(0xFFF59E0B))),
+              const SizedBox(width: 8),
+              Expanded(child: _buildMiniStat('Đang bật', '$armedCount', Icons.shield, AppTheme.statusArmed)),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Thiết bị IoT toàn hệ thống (${_devices.length})',
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppTheme.textPrimary),
+              ),
+              IconButton(
+                icon: const Icon(Icons.refresh, size: 20),
+                onPressed: _loadAdminData,
+                tooltip: 'Làm mới',
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (_devices.isEmpty)
+            Container(
+              padding: const EdgeInsets.all(32),
+              alignment: Alignment.center,
+              child: const Text('Chưa có thiết bị nào kết nối vào hệ thống.', style: TextStyle(color: Color(0xFF64748B))),
+            )
+          else
+            ..._devices.map((dev) {
+              final isArmed = dev.isArmed;
+              final isSensor = dev.deviceType.toLowerCase() == 'sensor';
+              final isDoorbell = dev.deviceType.toLowerCase() == 'doorbell';
+
+              return Card(
+                margin: const EdgeInsets.only(bottom: 10),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  side: const BorderSide(color: AppTheme.borderWarm),
+                ),
+                child: ListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                  leading: CircleAvatar(
+                    backgroundColor: const Color(0xFFFFECE8),
+                    child: Icon(
+                      isSensor ? Icons.sensors : (isDoorbell ? Icons.doorbell : Icons.videocam),
+                      color: AppTheme.coralPink,
+                    ),
+                  ),
+                  title: Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          dev.name,
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: isArmed ? const Color(0xFFE8F5E9) : const Color(0xFFFFEBEE),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          isArmed ? 'Online' : 'Offline',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            color: isArmed ? const Color(0xFF2E7D32) : const Color(0xFFC62828),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  subtitle: Text(
+                    'Vị trí: ${dev.location.isNotEmpty ? dev.location : "Cửa chính"} • ID: ${dev.id.substring(0, dev.id.length > 8 ? 8 : dev.id.length)}...',
+                    style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+                  ),
+                  trailing: PopupMenuButton<String>(
+                    icon: const Icon(Icons.more_vert),
+                    onSelected: (val) async {
+                      if (val == 'toggle') {
+                        try {
+                          await ApiClient.request('PATCH', '/api/devices/${dev.id}/toggle-arm');
+                          _loadAdminData();
+                        } catch (_) {}
+                      } else if (val == 'delete') {
+                        try {
+                          await ApiClient.request('DELETE', '/api/devices/${dev.id}');
+                          _loadAdminData();
+                        } catch (_) {}
+                      }
+                    },
+                    itemBuilder: (ctx) => [
+                      PopupMenuItem(
+                        value: 'toggle',
+                        child: Row(
+                          children: [
+                            Icon(isArmed ? Icons.shield_outlined : Icons.shield, color: AppTheme.coralPink, size: 18),
+                            const SizedBox(width: 8),
+                            Text(isArmed ? 'Tắt bảo vệ' : 'Bật bảo vệ'),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'delete',
+                        child: Row(
+                          children: [
+                            Icon(Icons.delete_outline, color: AppTheme.coralPink, size: 18),
+                            SizedBox(width: 8),
+                            Text('Xóa khỏi hệ thống', style: TextStyle(color: AppTheme.coralPink)),
                           ],
                         ),
                       ),
