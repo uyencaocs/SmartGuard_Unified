@@ -57,7 +57,7 @@ class _LoginScreenState extends State<LoginScreen> {
     // Tự mở hộp thoại vân tay đúng 1 lần khi vào màn hình (nếu đã liên kết)
     if (canBio && savedUser != null && !SessionManager.isLoggedIn && !_autoPromptDone) {
       _autoPromptDone = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future.delayed(const Duration(milliseconds: 350), () {
         if (mounted) _triggerBiometricLogin(silentCancel: true);
       });
     }
@@ -71,14 +71,13 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _triggerBiometricLogin({bool silentCancel = false}) async {
-    if (_bioBusy) return;
+    if (_bioBusy && silentCancel) return;
     setState(() => _bioBusy = true);
     try {
       final savedUser = await SessionManager.getSavedBiometricUser();
       if (savedUser == null || !await SessionManager.isBiometricEnabled()) {
         _showBioMessage(
-          'Chưa có tài khoản nào bật đăng nhập vân tay trên máy này. Hãy đăng nhập bằng mật khẩu, '
-          'sau đó bật "Đăng nhập bằng Vân tay" trong Cài đặt.',
+          'Thiết bị chưa lưu phiên đăng nhập nào. Vui lòng đăng nhập bằng Mật khẩu + OTP lần đầu tiên để kích hoạt mở khóa vân tay.',
           AppTheme.statusWarning,
         );
         return;
@@ -91,7 +90,12 @@ class _LoginScreenState extends State<LoginScreen> {
       final auth = await AuthService.authenticateBiometric(
         reason: 'Quét vân tay để đăng nhập vào tài khoản $displayName',
       );
-      if (auth.busy) return;
+      if (auth.busy) {
+        if (!silentCancel) {
+          _showBioMessage('Hệ thống xác thực đang bận, vui lòng thử lại sau vài giây.', AppTheme.statusWarning);
+        }
+        return;
+      }
       if (!auth.success) {
         final cancelled = (auth.message ?? '').contains('hủy');
         if (!(silentCancel && cancelled)) {

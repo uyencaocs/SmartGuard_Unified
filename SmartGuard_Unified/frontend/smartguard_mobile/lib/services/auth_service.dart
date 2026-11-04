@@ -1,4 +1,5 @@
 import 'package:local_auth/local_auth.dart';
+import 'package:local_auth_android/local_auth_android.dart';
 import '../core/api_client.dart';
 import '../core/session_manager.dart';
 import '../models/models.dart';
@@ -81,8 +82,7 @@ class AuthService {
     try {
       final canCheck = await _localAuth.canCheckBiometrics;
       final isDeviceSupported = await _localAuth.isDeviceSupported();
-      final biometrics = await _localAuth.getAvailableBiometrics();
-      return (canCheck || isDeviceSupported) && (biometrics.isNotEmpty || canCheck || isDeviceSupported);
+      return canCheck || isDeviceSupported;
     } catch (_) {
       return false;
     }
@@ -90,18 +90,26 @@ class AuthService {
 
   static bool _bioInProgress = false;
 
-  /// Quét vân tay / Face ID. Trả về kết quả kèm lý do lỗi (không nuốt lỗi nữa).
-  /// Chặn gọi chồng 2 lần (ví dụ tự bật khi mở màn hình + người dùng bấm nút).
+  /// Quét vân tay / Face ID. Trả về kết quả kèm lý do lỗi.
+  /// Tự động hủy phiên cũ trước khi mở phiên mới để tránh kẹt "auth_in_progress".
   static Future<BiometricAuthResult> authenticateBiometric({
     String reason = 'Vui lòng quét vân tay hoặc khuôn mặt để mở khóa SmartGuard',
   }) async {
-    if (_bioInProgress) {
-      return const BiometricAuthResult(false, busy: true);
-    }
+    try {
+      await _localAuth.stopAuthentication();
+    } catch (_) {}
+
     _bioInProgress = true;
     try {
       final ok = await _localAuth.authenticate(
         localizedReason: reason,
+        authMessages: const [
+          AndroidAuthMessages(
+            signInTitle: 'Xác thực sinh trắc học SmartGuard',
+            signInHint: 'Chạm vào cảm biến vân tay để mở khóa',
+            cancelButton: 'Hủy',
+          ),
+        ],
         biometricOnly: false,
         persistAcrossBackgrounding: true,
       );

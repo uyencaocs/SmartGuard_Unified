@@ -57,8 +57,8 @@ class SessionManager {
   // ─────────────────────────── PHIÊN HIỆN TẠI ───────────────────────────
 
   /// Lưu phiên sau khi đăng nhập mật khẩu + OTP thành công.
-  /// KHÔNG tự bật vân tay. Nếu tài khoản này chính là tài khoản đã liên kết vân tay
-  /// thì làm mới token của liên kết để lần sau đăng nhập vân tay không bị hết hạn.
+  /// Tự động lưu và kích hoạt phiên sinh trắc học tin cậy cho tài khoản này
+  /// (trừ khi người dùng chủ động tắt trong Cài đặt).
   static Future<void> saveSession(String token, UserModel rawUser) async {
     final user = _enrichUserFromToken(token, rawUser);
     _cachedToken = token;
@@ -68,10 +68,11 @@ class SessionManager {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_keyUser, _encodeUser(user));
 
-    final bioUser = await getSavedBiometricUser();
-    if (bioUser != null && _sameAccount(bioUser, user)) {
-      await _secureStorage.write(key: _keyBioToken, value: token);
-      await _secureStorage.write(key: _keyBioUser, value: _encodeUser(user));
+    final manuallyDisabled = prefs.getBool('sg_biometric_manually_disabled') ?? false;
+    await _secureStorage.write(key: _keyBioToken, value: token);
+    await _secureStorage.write(key: _keyBioUser, value: _encodeUser(user));
+    if (!manuallyDisabled) {
+      await prefs.setBool(_keyBiometricEnabled, true);
     }
   }
 
@@ -115,28 +116,37 @@ class SessionManager {
     final user = _cachedUser ?? await getCurrentUser();
     if (token == null || token.isEmpty || user == null) return false;
 
-    await _secureStorage.write(key: _keyBioToken, value: token);
-    await _secureStorage.write(key: _keyBioUser, value: _encodeUser(user));
+    try {
+      await _secureStorage.write(key: _keyBioToken, value: token);
+      await _secureStorage.write(key: _keyBioUser, value: _encodeUser(user));
+    } catch (_) {}
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_keyBiometricEnabled, true);
+    await prefs.setBool('sg_biometric_manually_disabled', false);
     return true;
   }
 
   /// Xóa liên kết sinh trắc học hoàn toàn (khi người dùng TẮT vân tay).
   static Future<void> removeBiometricBinding() async {
-    await _secureStorage.delete(key: _keyBioToken);
-    await _secureStorage.delete(key: _keyBioUser);
+    try {
+      await _secureStorage.delete(key: _keyBioToken);
+      await _secureStorage.delete(key: _keyBioUser);
+    } catch (_) {}
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_keyBioUser);
     await prefs.setBool(_keyBiometricEnabled, false);
+    await prefs.setBool('sg_biometric_manually_disabled', true);
   }
 
   /// Vân tay chỉ được coi là BẬT khi cờ bật = true VÀ thật sự có tài khoản liên kết.
   static Future<bool> isBiometricEnabled() async {
     final prefs = await SharedPreferences.getInstance();
+    final manuallyDisabled = prefs.getBool('sg_biometric_manually_disabled') ?? false;
+    if (manuallyDisabled) return false;
     final flag = prefs.getBool(_keyBiometricEnabled) ?? false;
-    if (!flag) return false;
-    return (await getSavedBiometricUser()) != null;
+    if (flag) return true;
+    final bioUser = await getSavedBiometricUser();
+    return bioUser != null;
   }
 
   /// Vân tay đang liên kết với chính tài khoản đang đăng nhập hay không.
@@ -150,20 +160,34 @@ class SessionManager {
 
   /// Tài khoản đã liên kết vân tay (để hiển thị trên nút đăng nhập vân tay).
   static Future<UserModel?> getSavedBiometricUser() async {
-    return _decodeUser(await _secureStorage.read(key: _keyBioUser));
+    try {
+      final bioUserStr = await _secureStorage.read(key: _keyBioUser);
+      final user = _decodeUser(bioUserStr);
+      if (user != null) return user;
+    } catch (_) {}
+    final prefs = await SharedPreferences.getInstance();
+    return _decodeUser(prefs.getString(_keyUser));
   }
 
   /// Khôi phục ĐÚNG tài khoản đã liên kết sau khi quét vân tay thành công.
   static Future<BiometricRestoreResult> restoreBiometricSession() async {
-    if (!await isBiometricEnabled()) {
-      return const BiometricRestoreResult(BiometricRestoreStatus.notLinked);
-    }
     final bioUser = await getSavedBiometricUser();
     if (bioUser == null) {
       return const BiometricRestoreResult(BiometricRestoreStatus.notLinked);
     }
 
-    final bioToken = await _secureStorage.read(key: _keyBioToken);
+    String? bioToken;
+    try {
+      bioToken = await _secureStorage.read(key: _keyBioToken);
+    } catch (_) {}
+
+    // Fallback sang token phiên gần nhất nếu bioToken bị thiếu
+    if (bioToken == null || bioToken.isEmpty) {
+      try {
+        bioToken = await _secureStorage.read(key: _keyToken);
+      } catch (_) {}
+    }
+
     if (bioToken == null || bioToken.isEmpty) {
       return BiometricRestoreResult(BiometricRestoreStatus.tokenMissing, bioUser);
     }
@@ -174,12 +198,10 @@ class SessionManager {
       if (exp is num) {
         final expiry = DateTime.fromMillisecondsSinceEpoch(exp.toInt() * 1000);
         if (DateTime.now().isAfter(expiry)) {
-          await _secureStorage.delete(key: _keyBioToken);
           return BiometricRestoreResult(BiometricRestoreStatus.tokenExpired, bioUser);
         }
       }
       if (!_tokenBelongsTo(claims, bioUser)) {
-        await _secureStorage.delete(key: _keyBioToken);
         return BiometricRestoreResult(BiometricRestoreStatus.accountMismatch, bioUser);
       }
     }
@@ -187,10 +209,14 @@ class SessionManager {
     final user = _enrichUserFromToken(bioToken, bioUser);
     _cachedToken = bioToken;
     _cachedUser = user;
-    await _secureStorage.write(key: _keyToken, value: bioToken);
-    await _secureStorage.write(key: _keyBioUser, value: _encodeUser(user));
+    try {
+      await _secureStorage.write(key: _keyToken, value: bioToken);
+      await _secureStorage.write(key: _keyBioUser, value: _encodeUser(user));
+      await _secureStorage.write(key: _keyBioToken, value: bioToken);
+    } catch (_) {}
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_keyUser, _encodeUser(user));
+    await prefs.setBool(_keyBiometricEnabled, true);
     return BiometricRestoreResult(BiometricRestoreStatus.success, user);
   }
 
@@ -219,11 +245,14 @@ class SessionManager {
   }
 
   static bool _sameAccount(UserModel a, UserModel b) {
-    if (a.id.isNotEmpty && b.id.isNotEmpty) return a.id == b.id;
     if (a.email.isNotEmpty && b.email.isNotEmpty) {
-      return a.email.toLowerCase() == b.email.toLowerCase();
+      if (a.email.trim().toLowerCase() == b.email.trim().toLowerCase()) return true;
     }
-    return a.username.isNotEmpty && a.username == b.username;
+    if (a.username.isNotEmpty && b.username.isNotEmpty) {
+      if (a.username.trim().toLowerCase() == b.username.trim().toLowerCase()) return true;
+    }
+    if (a.id.isNotEmpty && b.id.isNotEmpty && a.id == b.id) return true;
+    return false;
   }
 
   static Map<String, dynamic>? _decodeJwtClaims(String token) {

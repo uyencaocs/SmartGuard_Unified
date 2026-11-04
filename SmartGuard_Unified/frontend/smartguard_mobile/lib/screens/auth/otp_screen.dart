@@ -67,64 +67,16 @@ class _OtpScreenState extends State<OtpScreen> {
 
       if (!mounted) return;
 
-      // Chỉ hỏi bật vân tay khi tài khoản này CHƯA được liên kết.
-      // Nếu đã liên kết đúng tài khoản này, saveSession() đã tự làm mới token vân tay.
+      // SessionManager.saveSession() đã tự động liên kết và kích hoạt vân tay cho tài khoản này
       final canBio = await AuthService.canUseBiometric();
-      final alreadyLinked = await SessionManager.isBiometricLinkedToCurrentUser();
-      if (canBio && !alreadyLinked && mounted) {
-        final otherUser = await SessionManager.isBiometricEnabled()
-            ? await SessionManager.getSavedBiometricUser()
-            : null;
-        if (!mounted) return;
-        final otherName = otherUser == null
-            ? null
-            : (otherUser.email.isNotEmpty ? otherUser.email : otherUser.username);
-
-        final enableBio = await showDialog<bool>(
-          context: context,
-          barrierDismissible: false,
-          builder: (ctx) => AlertDialog(
-            backgroundColor: AppTheme.cardWhite,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            title: const Text('Kích hoạt Sinh trắc học', style: TextStyle(fontWeight: FontWeight.bold)),
-            content: Text(
-              otherName != null
-                  ? 'Vân tay trên máy này đang liên kết với tài khoản $otherName. '
-                      'Bạn có muốn chuyển đăng nhập vân tay sang tài khoản hiện tại không?'
-                  : 'Bạn có muốn bật đăng nhập bằng vân tay hoặc Face ID cho tài khoản này ở các lần sau không?',
-            ),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Bỏ qua', style: TextStyle(color: AppTheme.secondaryText))),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.royalPurple),
-                onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('Kích hoạt'),
-              ),
-            ],
-          ),
-        );
-
-        if (enableBio == true) {
-          final auth = await AuthService.authenticateBiometric(
-            reason: 'Quét vân tay để liên kết với tài khoản SmartGuard của bạn',
-          );
-          if (auth.success) {
-            await SessionManager.enableBiometricForCurrentUser();
-          }
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(auth.success
-                    ? 'Đã bật đăng nhập vân tay cho tài khoản này.'
-                    : 'Chưa bật được vân tay: ${auth.message ?? 'xác thực thất bại'}. Bạn có thể bật lại trong Cài đặt.'),
-                backgroundColor: auth.success ? AppTheme.statusArmed : AppTheme.statusWarning,
-              ),
-            );
-          }
-        }
-      }
-
-      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(canBio
+              ? 'Đăng nhập thành công! Đã kích hoạt mở khóa bằng vân tay cho tài khoản này.'
+              : 'Đăng nhập SmartGuard thành công!'),
+          backgroundColor: AppTheme.statusArmed,
+        ),
+      );
 
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const HomeShell()),

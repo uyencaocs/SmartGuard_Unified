@@ -20,7 +20,7 @@ namespace SmartGuard.API.Services.Security
         public string Key { get; set; } = "SmartGuard_Security_Master_Key_2026_AtLeast32BytesLength!";
         public string Issuer { get; set; } = "SmartGuardApi";
         public string Audience { get; set; } = "SmartGuardMobile";
-        public int ExpirationHours { get; set; } = 24;
+        public int ExpirationHours { get; set; } = 720;
     }
 
     public class TokenService : ITokenService

@@ -29,6 +29,9 @@ class _AdminScreenState extends State<AdminScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
+    _tabController.addListener(() {
+      if (mounted) setState(() {});
+    });
     _loadAdminData();
     _loadKnownPersons();
   }
@@ -41,42 +44,72 @@ class _AdminScreenState extends State<AdminScreen>
 
   Future<void> _loadAdminData() async {
     setState(() => _isLoading = true);
-    try {
-      final statsRes = await ApiClient.request('GET', '/api/admin/stats');
-      final systemRes = await ApiClient.request('GET', '/api/admin/system');
-      final usersRes =
-          await ApiClient.request('GET', '/api/admin/users') as List<dynamic>;
 
-      List<ImageItemModel> imgList = [];
+    Map<String, dynamic>? statsRes;
+    try {
+      final res = await ApiClient.request('GET', '/api/admin/stats');
+      if (res is Map<String, dynamic>) statsRes = res;
+    } catch (_) {}
+
+    Map<String, dynamic>? systemRes;
+    try {
+      final res = await ApiClient.request('GET', '/api/admin/system');
+      if (res is Map<String, dynamic>) systemRes = res;
+    } catch (_) {}
+
+    List<UserModel> loadedUsers = [];
+    try {
+      final res = await ApiClient.request('GET', '/api/admin/users');
+      if (res is List) {
+        loadedUsers = res
+            .map((e) => UserModel.fromJson(e as Map<String, dynamic>))
+            .toList();
+      }
+    } catch (e) {
+      debugPrint('Error loading admin users: $e');
+    }
+
+    List<DeviceModel> devList = [];
+    try {
+      dynamic devRes;
       try {
-        final imgRes =
-            await ApiClient.request('GET', '/api/images/list?limit=60')
-                as List<dynamic>;
+        devRes = await ApiClient.request('GET', '/api/admin/devices');
+      } catch (_) {
+        devRes = await ApiClient.request('GET', '/api/devices');
+      }
+      if (devRes is List) {
+        devList = devRes
+            .map((e) => DeviceModel.fromJson(e as Map<String, dynamic>))
+            .toList();
+      }
+    } catch (e) {
+      debugPrint('Error loading admin devices: $e');
+    }
+
+    List<ImageItemModel> imgList = [];
+    try {
+      final imgRes =
+          await ApiClient.request('GET', '/api/images/list?limit=60');
+      if (imgRes is List) {
         imgList = imgRes
             .map((e) => ImageItemModel.fromJson(e as Map<String, dynamic>))
             .toList();
-      } catch (_) {}
-
-      List<DeviceModel> devList = [];
-      try {
-        final devRes = await ApiClient.request('GET', '/api/devices') as List<dynamic>;
-        devList = devRes.map((e) => DeviceModel.fromJson(e as Map<String, dynamic>)).toList();
-      } catch (_) {}
-
-      if (mounted) {
-        setState(() {
-          _stats = statsRes as Map<String, dynamic>?;
-          _systemInfo = systemRes as Map<String, dynamic>?;
-          _users = usersRes
-              .map((e) => UserModel.fromJson(e as Map<String, dynamic>))
-              .toList();
-          _images = imgList;
-          _devices = devList;
-          _isLoading = false;
-        });
       }
-    } catch (_) {
-      if (mounted) setState(() => _isLoading = false);
+    } catch (_) {}
+
+    if (mounted) {
+      setState(() {
+        _stats = statsRes;
+        _systemInfo = systemRes;
+        if (loadedUsers.isNotEmpty || _users.isEmpty) {
+          _users = loadedUsers;
+        }
+        if (devList.isNotEmpty || _devices.isEmpty) {
+          _devices = devList;
+        }
+        _images = imgList;
+        _isLoading = false;
+      });
     }
   }
 
@@ -350,8 +383,9 @@ class _AdminScreenState extends State<AdminScreen>
               onPressed: () async {
                 if (!formKey.currentState!.validate()) return;
                 try {
+                  dynamic res;
                   try {
-                    await ApiClient.request(
+                    res = await ApiClient.request(
                       'POST',
                       '/api/admin/users',
                       body: {
@@ -363,7 +397,7 @@ class _AdminScreenState extends State<AdminScreen>
                     );
                   } catch (adminErr) {
                     // Nếu chưa có quyền Admin (401/403) hoặc chưa đăng nhập, sử dụng API đăng ký công khai
-                    await ApiClient.request(
+                    res = await ApiClient.request(
                       'POST',
                       '/api/auth/register',
                       body: {
@@ -376,6 +410,15 @@ class _AdminScreenState extends State<AdminScreen>
                   }
                   if (mounted) {
                     Navigator.pop(ctx);
+                    if (res is Map<String, dynamic>) {
+                      try {
+                        final newUser = UserModel.fromJson(res);
+                        setState(() {
+                          _users.removeWhere((u) => u.email.toLowerCase() == newUser.email.toLowerCase());
+                          _users.insert(0, newUser);
+                        });
+                      } catch (_) {}
+                    }
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         content: Text(
@@ -384,7 +427,7 @@ class _AdminScreenState extends State<AdminScreen>
                         backgroundColor: AppTheme.statusArmed,
                       ),
                     );
-                    _loadAdminData();
+                    await _loadAdminData();
                   }
                 } catch (e) {
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -565,6 +608,18 @@ class _AdminScreenState extends State<AdminScreen>
                   );
                   if (mounted) {
                     Navigator.pop(ctx);
+                    setState(() {
+                      final idx = _users.indexWhere((u) => u.id == user.id);
+                      if (idx != -1) {
+                        _users[idx] = UserModel(
+                          id: user.id,
+                          email: emailCtrl.text.trim(),
+                          username: usernameCtrl.text.trim(),
+                          role: selectedRole,
+                          isLocked: isLocked,
+                        );
+                      }
+                    });
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
                         content: Text(
@@ -620,6 +675,9 @@ class _AdminScreenState extends State<AdminScreen>
     if (confirm == true) {
       try {
         await ApiClient.request('DELETE', '/api/admin/users/${user.id}');
+        setState(() {
+          _users.removeWhere((u) => u.id == user.id);
+        });
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -636,6 +694,353 @@ class _AdminScreenState extends State<AdminScreen>
               content: Text('Lỗi xóa: $e'),
               backgroundColor: AppTheme.statusAlarm,
             ),
+          );
+        }
+      }
+    }
+  }
+
+  // ─────────────────────────── QUẢN LÝ THIẾT BỊ IOT ───────────────────────────
+
+  Future<void> _showAddDeviceDialog() async {
+    final formKey = GlobalKey<FormState>();
+    final nameCtrl = TextEditingController();
+    final locationCtrl = TextEditingController(text: 'Cửa chính');
+    String selectedType = 'camera';
+    double noiseThresh = 70.0;
+    double motionThresh = 3.5;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Row(
+            children: [
+              Icon(Icons.add_to_queue_rounded, color: AppTheme.coralPink),
+              SizedBox(width: 8),
+              Expanded(child: Text('Thêm thiết bị IoT mới', overflow: TextOverflow.ellipsis)),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Form(
+              key: formKey,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextFormField(
+                    controller: nameCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Tên thiết bị *',
+                      hintText: 'VD: Camera Cổng Trước',
+                      prefixIcon: Icon(Icons.devices),
+                    ),
+                    validator: (v) => (v == null || v.trim().isEmpty) ? 'Vui lòng nhập tên thiết bị' : null,
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: locationCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Vị trí lắp đặt',
+                      hintText: 'VD: Cửa chính, Ban công, Sân sau',
+                      prefixIcon: Icon(Icons.location_on_outlined),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('Loại thiết bị:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      ChoiceChip(
+                        avatar: const Icon(Icons.videocam, size: 16),
+                        label: const Text('Camera'),
+                        selected: selectedType == 'camera',
+                        onSelected: (val) {
+                          if (val) setDialogState(() => selectedType = 'camera');
+                        },
+                      ),
+                      ChoiceChip(
+                        avatar: const Icon(Icons.sensors, size: 16),
+                        label: const Text('Cảm biến'),
+                        selected: selectedType == 'sensor',
+                        onSelected: (val) {
+                          if (val) setDialogState(() => selectedType = 'sensor');
+                        },
+                      ),
+                      ChoiceChip(
+                        avatar: const Icon(Icons.doorbell, size: 16),
+                        label: const Text('Chuông cửa'),
+                        selected: selectedType == 'doorbell',
+                        onSelected: (val) {
+                          if (val) setDialogState(() => selectedType = 'doorbell');
+                        },
+                      ),
+                      ChoiceChip(
+                        avatar: const Icon(Icons.warning_amber_rounded, size: 16),
+                        label: const Text('Còi báo'),
+                        selected: selectedType == 'siren',
+                        onSelected: (val) {
+                          if (val) setDialogState(() => selectedType = 'siren');
+                        },
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Hủy')),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.coralPink),
+              onPressed: () async {
+                if (!formKey.currentState!.validate()) return;
+                try {
+                  final desc = 'Loại: $selectedType | Vị trí: ${locationCtrl.text.trim().isNotEmpty ? locationCtrl.text.trim() : "Cửa chính"}';
+                  dynamic res;
+                  try {
+                    res = await ApiClient.request(
+                      'POST',
+                      '/api/admin/devices',
+                      body: {
+                        'name': nameCtrl.text.trim(),
+                        'description': desc,
+                        'noiseThreshold': noiseThresh,
+                        'motionThreshold': motionThresh,
+                      },
+                    );
+                  } catch (_) {
+                    res = await ApiClient.request(
+                      'POST',
+                      '/api/devices',
+                      body: {
+                        'name': nameCtrl.text.trim(),
+                        'description': desc,
+                        'noiseThreshold': noiseThresh,
+                        'motionThreshold': motionThresh,
+                      },
+                    );
+                  }
+                  if (mounted) {
+                    Navigator.pop(ctx);
+                    if (res is Map<String, dynamic>) {
+                      try {
+                        final newDev = DeviceModel.fromJson(res);
+                        setState(() {
+                          _devices.insert(0, newDev);
+                        });
+                      } catch (_) {}
+                    }
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Đã thêm thiết bị IoT thành công!'),
+                        backgroundColor: AppTheme.statusArmed,
+                      ),
+                    );
+                    await _loadAdminData();
+                  }
+                } catch (e) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Lỗi thêm thiết bị: $e'), backgroundColor: AppTheme.statusAlarm),
+                  );
+                }
+              },
+              child: const Text('Thêm thiết bị', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showEditDeviceDialog(DeviceModel dev) async {
+    final formKey = GlobalKey<FormState>();
+    final nameCtrl = TextEditingController(text: dev.name);
+    final locationCtrl = TextEditingController(text: dev.location);
+    String selectedType = dev.deviceType;
+    bool isArmed = dev.isArmed;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Row(
+            children: [
+              const Icon(Icons.edit, color: AppTheme.coralPink),
+              const SizedBox(width: 8),
+              Expanded(child: Text('Sửa: ${dev.name}', overflow: TextOverflow.ellipsis)),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Form(
+              key: formKey,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextFormField(
+                    controller: nameCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Tên thiết bị *',
+                      prefixIcon: Icon(Icons.devices),
+                    ),
+                    validator: (v) => (v == null || v.trim().isEmpty) ? 'Vui lòng nhập tên thiết bị' : null,
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: locationCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Vị trí lắp đặt',
+                      prefixIcon: Icon(Icons.location_on_outlined),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('Loại thiết bị:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      ChoiceChip(
+                        avatar: const Icon(Icons.videocam, size: 16),
+                        label: const Text('Camera'),
+                        selected: selectedType == 'camera',
+                        onSelected: (val) {
+                          if (val) setDialogState(() => selectedType = 'camera');
+                        },
+                      ),
+                      ChoiceChip(
+                        avatar: const Icon(Icons.sensors, size: 16),
+                        label: const Text('Cảm biến'),
+                        selected: selectedType == 'sensor',
+                        onSelected: (val) {
+                          if (val) setDialogState(() => selectedType = 'sensor');
+                        },
+                      ),
+                      ChoiceChip(
+                        avatar: const Icon(Icons.doorbell, size: 16),
+                        label: const Text('Chuông cửa'),
+                        selected: selectedType == 'doorbell',
+                        onSelected: (val) {
+                          if (val) setDialogState(() => selectedType = 'doorbell');
+                        },
+                      ),
+                      ChoiceChip(
+                        avatar: const Icon(Icons.warning_amber_rounded, size: 16),
+                        label: const Text('Còi báo'),
+                        selected: selectedType == 'siren',
+                        onSelected: (val) {
+                          if (val) setDialogState(() => selectedType = 'siren');
+                        },
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  SwitchListTile(
+                    title: const Text('Chế độ cảnh giác (Armed)'),
+                    value: isArmed,
+                    activeThumbColor: AppTheme.statusArmed,
+                    onChanged: (val) => setDialogState(() => isArmed = val),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Hủy')),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.coralPink),
+              onPressed: () async {
+                if (!formKey.currentState!.validate()) return;
+                try {
+                  final desc = 'Loại: $selectedType | Vị trí: ${locationCtrl.text.trim().isNotEmpty ? locationCtrl.text.trim() : "Cửa chính"}';
+                  try {
+                    await ApiClient.request(
+                      'PUT',
+                      '/api/admin/devices/${dev.id}',
+                      body: {
+                        'name': nameCtrl.text.trim(),
+                        'description': desc,
+                        'isArmed': isArmed,
+                      },
+                    );
+                  } catch (_) {
+                    await ApiClient.request(
+                      'PUT',
+                      '/api/devices/${dev.id}',
+                      body: {
+                        'name': nameCtrl.text.trim(),
+                        'description': desc,
+                        'isArmed': isArmed,
+                      },
+                    );
+                  }
+                  if (mounted) {
+                    Navigator.pop(ctx);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Đã cập nhật thiết bị thành công!'),
+                        backgroundColor: AppTheme.statusArmed,
+                      ),
+                    );
+                    await _loadAdminData();
+                  }
+                } catch (e) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Lỗi cập nhật thiết bị: $e'), backgroundColor: AppTheme.statusAlarm),
+                  );
+                }
+              },
+              child: const Text('Lưu thay đổi', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _deleteDevice(DeviceModel dev) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Xác nhận xóa thiết bị'),
+        content: Text('Bạn có chắc muốn xóa thiết bị "${dev.name}" khỏi hệ thống?\nHành động này không thể hoàn tác.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Hủy')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.statusAlarm),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Xóa thiết bị', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      try {
+        try {
+          await ApiClient.request('DELETE', '/api/admin/devices/${dev.id}');
+        } catch (_) {
+          await ApiClient.request('DELETE', '/api/devices/${dev.id}');
+        }
+        setState(() {
+          _devices.removeWhere((d) => d.id == dev.id);
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Đã xóa thiết bị "${dev.name}" thành công.'),
+              backgroundColor: AppTheme.statusArmed,
+            ),
+          );
+          await _loadAdminData();
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Lỗi xóa thiết bị: $e'), backgroundColor: AppTheme.statusAlarm),
           );
         }
       }
@@ -866,7 +1271,15 @@ class _AdminScreenState extends State<AdminScreen>
               icon: const Icon(Icons.person_add),
               label: const Text('Thêm tài khoản'),
             )
-          : null,
+          : (_tabController.index == 1
+              ? FloatingActionButton.extended(
+                  backgroundColor: AppTheme.coralPink,
+                  foregroundColor: Colors.white,
+                  onPressed: _showAddDeviceDialog,
+                  icon: const Icon(Icons.add_to_queue_rounded),
+                  label: const Text('Thêm thiết bị'),
+                )
+              : null),
     );
   }
 
@@ -1219,10 +1632,24 @@ class _AdminScreenState extends State<AdminScreen>
                 'Thiết bị IoT toàn hệ thống (${_devices.length})',
                 style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppTheme.textPrimary),
               ),
-              IconButton(
-                icon: const Icon(Icons.refresh, size: 20),
-                onPressed: _loadAdminData,
-                tooltip: 'Làm mới',
+              Row(
+                children: [
+                  ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.coralPink,
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    ),
+                    onPressed: _showAddDeviceDialog,
+                    icon: const Icon(Icons.add, size: 16, color: Colors.white),
+                    label: const Text('Thêm mới', style: TextStyle(color: Colors.white, fontSize: 12)),
+                  ),
+                  const SizedBox(width: 4),
+                  IconButton(
+                    icon: const Icon(Icons.refresh, size: 20),
+                    onPressed: _loadAdminData,
+                    tooltip: 'Làm mới',
+                  ),
+                ],
               ),
             ],
           ),
@@ -1288,19 +1715,32 @@ class _AdminScreenState extends State<AdminScreen>
                   trailing: PopupMenuButton<String>(
                     icon: const Icon(Icons.more_vert),
                     onSelected: (val) async {
-                      if (val == 'toggle') {
+                      if (val == 'edit') {
+                        _showEditDeviceDialog(dev);
+                      } else if (val == 'toggle') {
                         try {
-                          await ApiClient.request('PATCH', '/api/devices/${dev.id}/toggle-arm');
-                          _loadAdminData();
+                          try {
+                            await ApiClient.request('PATCH', '/api/admin/devices/${dev.id}/toggle-arm');
+                          } catch (_) {
+                            await ApiClient.request('PATCH', '/api/devices/${dev.id}/toggle-arm');
+                          }
+                          await _loadAdminData();
                         } catch (_) {}
                       } else if (val == 'delete') {
-                        try {
-                          await ApiClient.request('DELETE', '/api/devices/${dev.id}');
-                          _loadAdminData();
-                        } catch (_) {}
+                        _deleteDevice(dev);
                       }
                     },
                     itemBuilder: (ctx) => [
+                      const PopupMenuItem(
+                        value: 'edit',
+                        child: Row(
+                          children: [
+                            Icon(Icons.edit_outlined, color: AppTheme.primaryNavy, size: 18),
+                            SizedBox(width: 8),
+                            Text('Sửa thông tin'),
+                          ],
+                        ),
+                      ),
                       PopupMenuItem(
                         value: 'toggle',
                         child: Row(

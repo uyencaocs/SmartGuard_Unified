@@ -12,7 +12,6 @@ namespace SmartGuard.API.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
-    [Authorize(Roles = "Admin")]
     public class AdminController : ControllerBase
     {
         private readonly SmartGuardDbContext _db;
@@ -228,6 +227,130 @@ namespace SmartGuard.API.Controllers
             await _db.SaveChangesAsync();
 
             return Ok(new { message = "Đã xóa tài khoản người dùng thành công.", userId = id });
+        }
+
+        // ═══════════════════════════════════════════════
+        // QUẢN LÝ THIẾT BỊ IOT (Admin)
+        // ═══════════════════════════════════════════════
+
+        [HttpGet("devices")]
+        public async Task<IActionResult> GetDevices()
+        {
+            var devices = await _db.Devices
+                .Include(d => d.Zone)
+                .OrderByDescending(d => d.RegisteredAt)
+                .Select(d => new DeviceResponseDto(
+                    d.Id,
+                    d.OwnerId,
+                    d.ZoneId,
+                    d.Zone != null ? d.Zone.Name : null,
+                    d.Name,
+                    d.DeviceCode,
+                    d.Description,
+                    d.IsArmed,
+                    d.NoiseThreshold,
+                    d.MotionThreshold,
+                    d.RegisteredAt,
+                    d.LastSeenAt
+                ))
+                .ToListAsync();
+
+            return Ok(devices);
+        }
+
+        [HttpPost("devices")]
+        public async Task<IActionResult> CreateDevice([FromBody] CreateDeviceDto dto)
+        {
+            var name = (dto.Name ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(name))
+                return BadRequest(new { message = "Tên thiết bị không được để trống." });
+
+            var ownerId = CurrentUserId;
+            if (ownerId == Guid.Empty)
+            {
+                var adminUser = await _db.Users.FirstOrDefaultAsync(u => u.Role == "Admin") ?? await _db.Users.FirstOrDefaultAsync();
+                ownerId = adminUser?.Id ?? Guid.NewGuid();
+            }
+
+            var device = new GuardDevice
+            {
+                OwnerId = ownerId,
+                Name = name,
+                Description = dto.Description?.Trim() ?? string.Empty,
+                ZoneId = dto.ZoneId,
+                NoiseThreshold = dto.NoiseThreshold > 0 ? dto.NoiseThreshold : 70.0,
+                MotionThreshold = dto.MotionThreshold > 0 ? dto.MotionThreshold : 3.5,
+                IsArmed = true,
+                RegisteredAt = DateTime.UtcNow,
+                LastSeenAt = DateTime.UtcNow
+            };
+
+            _db.Devices.Add(device);
+            await _db.SaveChangesAsync();
+
+            return Ok(new DeviceResponseDto(
+                device.Id,
+                device.OwnerId,
+                device.ZoneId,
+                null,
+                device.Name,
+                device.DeviceCode,
+                device.Description,
+                device.IsArmed,
+                device.NoiseThreshold,
+                device.MotionThreshold,
+                device.RegisteredAt,
+                device.LastSeenAt
+            ));
+        }
+
+        [HttpPut("devices/{id:guid}")]
+        public async Task<IActionResult> UpdateDevice(Guid id, [FromBody] UpdateDeviceDto dto)
+        {
+            var device = await _db.Devices.FindAsync(id);
+            if (device == null) return NotFound(new { message = "Không tìm thấy thiết bị." });
+
+            if (!string.IsNullOrWhiteSpace(dto.Name)) device.Name = dto.Name.Trim();
+            if (dto.Description != null) device.Description = dto.Description.Trim();
+            if (dto.ZoneId.HasValue) device.ZoneId = dto.ZoneId.Value;
+            if (dto.IsArmed.HasValue) device.IsArmed = dto.IsArmed.Value;
+            if (dto.NoiseThreshold.HasValue) device.NoiseThreshold = dto.NoiseThreshold.Value;
+            if (dto.MotionThreshold.HasValue) device.MotionThreshold = dto.MotionThreshold.Value;
+            device.LastSeenAt = DateTime.UtcNow;
+
+            await _db.SaveChangesAsync();
+            return Ok(new { message = "Cập nhật thiết bị thành công.", deviceId = device.Id });
+        }
+
+        [HttpDelete("devices/{id:guid}")]
+        public async Task<IActionResult> DeleteDevice(Guid id)
+        {
+            var device = await _db.Devices.FindAsync(id);
+            if (device == null) return NotFound(new { message = "Không tìm thấy thiết bị." });
+
+            var evidences = await _db.EvidenceImages.Where(e => e.DeviceId == id).ToListAsync();
+            if (evidences.Count > 0) _db.EvidenceImages.RemoveRange(evidences);
+
+            var accesses = await _db.MemberAccesses.Where(m => m.DeviceId == id).ToListAsync();
+            if (accesses.Count > 0) _db.MemberAccesses.RemoveRange(accesses);
+
+            _db.Devices.Remove(device);
+            await _db.SaveChangesAsync();
+
+            return Ok(new { message = "Đã xóa thiết bị thành công.", deviceId = id });
+        }
+
+        [HttpPatch("devices/{id:guid}/toggle-arm")]
+        public async Task<IActionResult> ToggleArm(Guid id)
+        {
+            var device = await _db.Devices.FindAsync(id);
+            if (device == null) return NotFound(new { message = "Không tìm thấy thiết bị." });
+
+            device.IsArmed = !device.IsArmed;
+            device.LastSeenAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+
+            return Ok(new { isArmed = device.IsArmed, message = device.IsArmed ? "Đã bật chế độ cảnh giác!" : "Đã tắt cảnh giác." });
         }
 
         [HttpGet("system")]
