@@ -251,7 +251,7 @@ class _MotionDetectionScreenState extends State<MotionDetectionScreen>
       appBar: widget.isTab
           ? null
           : AppBar(
-              title: const Text('Phát hiện chuyển động'),
+              title: const Text('Cảm biến & Cảnh báo Âm thanh'),
               backgroundColor: AppTheme.creamBg,
               leading: const BackButton(color: AppTheme.headingDark),
             ),
@@ -267,7 +267,7 @@ class _MotionDetectionScreenState extends State<MotionDetectionScreen>
             _buildSensorMetrics(),
             const SizedBox(height: 16),
             _buildAiStatus(),
-            _buildSoundWaveform(),
+            _buildSoundAlertSection(),
             const SizedBox(height: 16),
             _buildSensitivitySettings(),
             const SizedBox(height: 16),
@@ -310,7 +310,7 @@ class _MotionDetectionScreenState extends State<MotionDetectionScreen>
               color: AppTheme.statusWarning,
               size: 20,
             );
-            text = 'Chưa có quyền micro – hãy cấp quyền ghi âm cho SmartGuard.';
+            text = 'Chưa có quyền micro – hãy chạm vào đây để cấp quyền ghi âm cho SmartGuard.';
             color = AppTheme.statusWarning;
             break;
           case SoundAiStatus.error:
@@ -319,35 +319,41 @@ class _MotionDetectionScreenState extends State<MotionDetectionScreen>
               color: AppTheme.statusAlarm,
               size: 20,
             );
-            text = 'Lỗi micro: ${_sound.lastError ?? 'không xác định'}';
+            text = 'Lỗi micro: ${_sound.lastError ?? 'không xác định'}. Chạm để thử lại.';
             color = AppTheme.statusAlarm;
             break;
           case SoundAiStatus.listening:
           case SoundAiStatus.idle:
             return const SizedBox.shrink();
         }
-        return Container(
-          margin: const EdgeInsets.only(bottom: 12),
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: color.withValues(alpha: 0.3)),
-          ),
-          child: Row(
-            children: [
-              SizedBox(width: 24, child: Center(child: leading)),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  text,
-                  style: const TextStyle(
-                    fontSize: 12.5,
-                    color: AppTheme.textDark,
+        return InkWell(
+          onTap: () async {
+            await _sound.start();
+          },
+          borderRadius: BorderRadius.circular(14),
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: color.withValues(alpha: 0.3)),
+            ),
+            child: Row(
+              children: [
+                SizedBox(width: 24, child: Center(child: leading)),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    text,
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      color: AppTheme.textDark,
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         );
       },
@@ -370,7 +376,7 @@ class _MotionDetectionScreenState extends State<MotionDetectionScreen>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Phát hiện chuyển động',
+                'Cảm biến & Cảnh báo Âm thanh AI',
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w800,
@@ -378,7 +384,7 @@ class _MotionDetectionScreenState extends State<MotionDetectionScreen>
                 ),
               ),
               Text(
-                'AI cảm biến đa lớp thông minh',
+                'AI YAMNet & Cảm biến gia tốc rung lắc',
                 style: TextStyle(fontSize: 13, color: AppTheme.secondaryText),
               ),
             ],
@@ -476,6 +482,7 @@ class _MotionDetectionScreenState extends State<MotionDetectionScreen>
   }
 
   Widget _buildSensorMetrics() {
+    final soundLabelVi = SoundClassifierService.labelToVietnamese(_currentSoundLabel);
     return Row(
       children: [
         Expanded(
@@ -491,19 +498,21 @@ class _MotionDetectionScreenState extends State<MotionDetectionScreen>
         const SizedBox(width: 12),
         Expanded(
           child: _metricCard(
-            icon: Icons.hearing,
-            label: SoundClassifierService.labelToVietnamese(_currentSoundLabel),
+            icon: Icons.volume_up_rounded,
+            label: 'Âm thanh:\n$soundLabelVi',
             value: '${(_currentSoundScore * 100).toStringAsFixed(0)}%',
-            color: _currentSoundScore > 0.5
-                ? AppTheme.statusWarning
-                : AppTheme.statusArmed,
+            color: _currentSoundScore >= _soundThreshold
+                ? AppTheme.statusAlarm
+                : (_currentSoundScore > 0.3
+                    ? AppTheme.statusWarning
+                    : AppTheme.royalPurple),
           ),
         ),
         const SizedBox(width: 12),
         Expanded(
           child: _metricCard(
             icon: Icons.merge_type,
-            label: 'Điểm AI',
+            label: 'Điểm hợp nhất\nĐa cảm biến',
             value: '${(_fusedScore * 100).toStringAsFixed(0)}%',
             color: _fusedScore >= _fusionThreshold
                 ? AppTheme.statusAlarm
@@ -554,72 +563,196 @@ class _MotionDetectionScreenState extends State<MotionDetectionScreen>
     );
   }
 
-  Widget _buildSoundWaveform() {
+  void _triggerTestSound(String label, double score) {
+    if (!_isMonitoringActive) {
+      _toggleMonitoring();
+    }
+    setState(() {
+      _currentSoundLabel = label;
+      _currentSoundScore = score;
+      for (int i = 0; i < _waveform.length; i++) {
+        _waveform[i] = (i % 2 == 0 ? score : score * 0.6);
+      }
+    });
+
+    _fusion.updateSoundResult(label, score);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('🔊 Đã kích hoạt cảnh báo âm thanh: ${SoundClassifierService.labelToVietnamese(label)} (${(score * 100).toStringAsFixed(0)}%)!'),
+        backgroundColor: AppTheme.royalPurple,
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
+  Widget _buildSoundAlertSection() {
+    final soundLabelVi = SoundClassifierService.labelToVietnamese(_currentSoundLabel);
+    final isAlarm = _currentSoundScore >= _soundThreshold;
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: AppTheme.cardWhite,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppTheme.borderWarm),
+        border: Border.all(
+          color: isAlarm ? AppTheme.statusAlarm : AppTheme.borderWarm,
+          width: isAlarm ? 1.5 : 1.0,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: isAlarm
+                ? AppTheme.statusAlarm.withValues(alpha: 0.12)
+                : Colors.black.withValues(alpha: 0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Header: Tiêu đề + Trạng thái
           Row(
             children: [
               const Icon(
-                Icons.graphic_eq,
+                Icons.volume_up_rounded,
                 color: AppTheme.royalPurple,
-                size: 18,
+                size: 20,
               ),
               const SizedBox(width: 8),
-              const Text(
-                'Sóng âm thanh',
-                style: TextStyle(
-                  fontWeight: FontWeight.w700,
-                  color: AppTheme.headingDark,
-                  fontSize: 14,
+              const Expanded(
+                child: Text(
+                  'Phần Cảnh Báo Âm Thanh AI',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w800,
+                    color: AppTheme.headingDark,
+                    fontSize: 15,
+                  ),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
-              const Spacer(),
               Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 3,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
-                  color: AppTheme.royalPurple.withValues(alpha: 0.1),
+                  color: isAlarm
+                      ? AppTheme.statusAlarm
+                      : (_isMonitoringActive
+                          ? const Color(0xFFE8F5E9)
+                          : const Color(0xFFF1F5F9)),
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(
-                  SoundClassifierService.labelToVietnamese(_currentSoundLabel),
-                  style: const TextStyle(
+                  isAlarm
+                      ? '🚨 BÁO ĐỘNG'
+                      : (_isMonitoringActive ? '🟢 Đang nghe...' : '⏸️ Tạm tắt'),
+                  style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
-                    color: AppTheme.royalPurple,
+                    color: isAlarm
+                        ? Colors.white
+                        : (_isMonitoringActive
+                            ? const Color(0xFF10B981)
+                            : AppTheme.secondaryText),
                   ),
                 ),
               ),
             ],
           ),
+          const SizedBox(height: 12),
+
+          // Banner kết quả phân tích âm thanh trực tiếp
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: isAlarm
+                  ? AppTheme.statusAlarm.withValues(alpha: 0.1)
+                  : AppTheme.royalPurple.withValues(alpha: 0.05),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: isAlarm
+                    ? AppTheme.statusAlarm.withValues(alpha: 0.3)
+                    : AppTheme.royalPurple.withValues(alpha: 0.15),
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  isAlarm ? Icons.warning_amber_rounded : Icons.hearing_rounded,
+                  color: isAlarm ? AppTheme.statusAlarm : AppTheme.royalPurple,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: RichText(
+                    text: TextSpan(
+                      style: const TextStyle(fontSize: 13, color: AppTheme.headingDark),
+                      children: [
+                        const TextSpan(text: 'Nhận diện: '),
+                        TextSpan(
+                          text: soundLabelVi,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            color: isAlarm ? AppTheme.statusAlarm : AppTheme.royalPurple,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                Text(
+                  '${(_currentSoundScore * 100).toStringAsFixed(0)}% rủi ro',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: isAlarm ? AppTheme.statusAlarm : AppTheme.royalPurple,
+                  ),
+                ),
+              ],
+            ),
+          ),
           const SizedBox(height: 14),
+
+          // Sóng âm thanh thời gian thực (Microphone Live Waveform)
+          Row(
+            children: [
+              const Text(
+                'Sóng âm thanh thời gian thực:',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: AppTheme.secondaryText,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                'Ngưỡng báo: ${(_soundThreshold * 100).toStringAsFixed(0)}%',
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                  color: AppTheme.secondaryText,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
           SizedBox(
-            height: 56,
+            height: 52,
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: List.generate(_waveform.length, (i) {
                 final amplitude = _isMonitoringActive ? _waveform[i] : 0.05;
-                final barColor = amplitude > 0.65
+                final barColor = amplitude >= _soundThreshold
                     ? AppTheme.statusAlarm
                     : amplitude > 0.4
-                    ? AppTheme.statusWarning
-                    : AppTheme.royalPurple.withValues(alpha: 0.4);
+                        ? AppTheme.statusWarning
+                        : AppTheme.royalPurple.withValues(alpha: 0.45);
                 return Expanded(
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 1.5),
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 150),
-                      height: max(4, amplitude * 56),
+                      height: max(4, amplitude * 52),
                       decoration: BoxDecoration(
                         color: barColor,
                         borderRadius: BorderRadius.circular(4),
@@ -630,7 +763,69 @@ class _MotionDetectionScreenState extends State<MotionDetectionScreen>
               }),
             ),
           ),
+          const SizedBox(height: 14),
+
+          // Nút thử nghiệm nhanh các loại âm thanh báo động
+          const Text(
+            'Thử nghiệm nhanh cảnh báo âm thanh:',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: AppTheme.headingDark,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _buildSoundTestButton(
+                label: '💥 Kính vỡ',
+                onTap: () => _triggerTestSound('Glass break', 0.95),
+              ),
+              _buildSoundTestButton(
+                label: '🚨 Còi hú',
+                onTap: () => _triggerTestSound('Siren alarm', 0.90),
+              ),
+              _buildSoundTestButton(
+                label: '🗣️ La hét',
+                onTap: () => _triggerTestSound('Screaming', 0.85),
+              ),
+              _buildSoundTestButton(
+                label: '🔊 Động lạ',
+                onTap: () => _triggerTestSound('Loud knock', 0.75),
+              ),
+            ],
+          ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildSoundTestButton({
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: AppTheme.royalPurple.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: AppTheme.royalPurple.withValues(alpha: 0.25),
+          ),
+        ),
+        child: Text(
+          label,
+          style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            color: AppTheme.royalPurple,
+          ),
+        ),
       ),
     );
   }

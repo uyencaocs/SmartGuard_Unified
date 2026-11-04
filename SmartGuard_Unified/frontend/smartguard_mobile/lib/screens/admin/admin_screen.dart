@@ -539,8 +539,8 @@ class _AdminScreenState extends State<AdminScreen>
                     children: [
                       Expanded(
                         child: ChoiceChip(
-                          avatar: const Icon(Icons.person, size: 16),
-                          label: const Text('Người dùng (User)'),
+                          avatar: const Icon(Icons.person_outline, size: 16),
+                          label: const Text('Người dùng', style: TextStyle(fontSize: 12)),
                           selected: selectedRole == 'Owner',
                           selectedColor: AppTheme.primaryBlue.withValues(
                             alpha: 0.2,
@@ -555,10 +555,10 @@ class _AdminScreenState extends State<AdminScreen>
                       Expanded(
                         child: ChoiceChip(
                           avatar: const Icon(
-                            Icons.admin_panel_settings,
+                            Icons.admin_panel_settings_outlined,
                             size: 16,
                           ),
-                          label: const Text('Quản trị (Admin)'),
+                          label: const Text('Quản trị', style: TextStyle(fontSize: 12)),
                           selected: selectedRole == 'Admin',
                           selectedColor: const Color(
                             0xFF7C3AED,

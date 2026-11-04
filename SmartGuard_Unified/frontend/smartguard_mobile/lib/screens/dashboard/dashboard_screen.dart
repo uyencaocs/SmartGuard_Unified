@@ -145,9 +145,9 @@ class DashboardScreenState extends State<DashboardScreen> {
 
   String _formatReason(String code) {
     final upper = code.toUpperCase();
-    if (upper.contains('NGUOI') || upper.contains('PERSON')) return 'Phát hiện người trước camera';
+    if (upper.contains('NGUOI') || upper.contains('PERSON') || upper.contains('STRANGER')) return 'Phát hiện người trước camera';
+    if (upper.contains('TIENG_DONG') || upper.contains('NOISE') || upper.contains('SOUND') || upper.contains('AM_THANH') || upper.contains('YAMNET')) return 'Cảnh báo âm thanh bất thường';
     if (upper.contains('CHUYEN_DONG') || upper.contains('MOTION')) return 'Phát hiện chuyển động';
-    if (upper.contains('TIENG_DONG') || upper.contains('NOISE') || upper.contains('SOUND')) return 'Phát hiện âm thanh lớn';
     if (upper.contains('RUNG_LAC') || upper.contains('SHAKE')) return 'Phát hiện rung lắc thiết bị';
     return code;
   }
@@ -581,10 +581,10 @@ class DashboardScreenState extends State<DashboardScreen> {
                         const SizedBox(width: 12),
                         Expanded(
                           child: _buildMetricTile(
-                            icon: Icons.sd_storage_outlined,
-                            iconColor: AppTheme.primaryNavy,
-                            title: 'Lưu trữ',
-                            subtitle: '23.6 GB trống',
+                            icon: Icons.graphic_eq_rounded,
+                            iconColor: _isSystemArmed ? AppTheme.royalPurple : AppTheme.secondaryText,
+                            title: 'Cảnh báo Âm thanh',
+                            subtitle: _isSystemArmed ? 'AI YAMNet sẵn sàng' : 'Đang tạm tắt',
                           ),
                         ),
                       ],
@@ -765,6 +765,7 @@ class DashboardScreenState extends State<DashboardScreen> {
     required Color badgeColor,
     VoidCallback? onTap,
   }) {
+    final isSound = title.toLowerCase().contains('âm thanh') || title.toLowerCase().contains('tiếng động');
     final isNetwork = imageAsset.startsWith('http') || imageAsset.startsWith('/');
     return InkWell(
       onTap: onTap,
@@ -783,14 +784,18 @@ class DashboardScreenState extends State<DashboardScreen> {
               child: Container(
                 width: 52,
                 height: 52,
-                color: AppTheme.creamBg,
+                color: isSound ? const Color(0xFFF3E8FF) : AppTheme.creamBg,
                 child: isNetwork
                     ? Image.network(
                         imageAsset.startsWith('http') ? imageAsset : '${AppConfig.baseUrl}$imageAsset',
                         fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => Image.asset('assets/images/alter.png', fit: BoxFit.cover),
+                        errorBuilder: (_, __, ___) => isSound
+                            ? const Icon(Icons.volume_up_rounded, color: AppTheme.royalPurple, size: 26)
+                            : Image.asset('assets/images/alter.png', fit: BoxFit.cover),
                       )
-                    : Image.asset(imageAsset, fit: BoxFit.cover),
+                    : isSound
+                        ? const Icon(Icons.volume_up_rounded, color: AppTheme.royalPurple, size: 26)
+                        : Image.asset(imageAsset, fit: BoxFit.cover),
               ),
             ),
             const SizedBox(width: 12),

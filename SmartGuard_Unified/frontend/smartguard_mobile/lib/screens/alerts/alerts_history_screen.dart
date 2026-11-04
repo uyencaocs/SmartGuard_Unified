@@ -319,7 +319,26 @@ class AlertsHistoryScreenState extends State<AlertsHistoryScreen> {
       }
 
       final date = a.triggeredAt.toLocal();
-      if (_selectedFilter == 'today') {
+      if (_selectedFilter == 'sound') {
+        final upper = a.triggerReason.toUpperCase();
+        return upper.contains('TIENG_DONG') ||
+            upper.contains('AM_THANH') ||
+            upper.contains('SOUND') ||
+            upper.contains('NOISE') ||
+            upper.contains('YAMNET') ||
+            upper.contains('AUDIO');
+      } else if (_selectedFilter == 'motion') {
+        final upper = a.triggerReason.toUpperCase();
+        return upper.contains('CHUYEN_DONG') ||
+            upper.contains('RUNG_LAC') ||
+            upper.contains('MOTION') ||
+            upper.contains('SHAKE');
+      } else if (_selectedFilter == 'stranger') {
+        final upper = a.triggerReason.toUpperCase();
+        return upper.contains('NGUOI') ||
+            upper.contains('STRANGER') ||
+            upper.contains('PERSON');
+      } else if (_selectedFilter == 'today') {
         return date.year == now.year &&
             date.month == now.month &&
             date.day == now.day;
@@ -449,6 +468,12 @@ class AlertsHistoryScreenState extends State<AlertsHistoryScreen> {
               child: Row(
                 children: [
                   _buildFilterChip('Tất cả', 'all'),
+                  const SizedBox(width: 8),
+                  _buildFilterChip('🔊 Âm thanh', 'sound'),
+                  const SizedBox(width: 8),
+                  _buildFilterChip('🏃 Chuyển động', 'motion'),
+                  const SizedBox(width: 8),
+                  _buildFilterChip('👤 Người lạ', 'stranger'),
                   const SizedBox(width: 8),
                   _buildFilterChip('Hôm nay', 'today'),
                   const SizedBox(width: 8),
@@ -718,12 +743,14 @@ class AlertsHistoryScreenState extends State<AlertsHistoryScreen> {
                 ClipRRect(
                   borderRadius: BorderRadius.circular(10),
                   child: Container(
-                    width: 48,
-                    height: 42,
-                    color: const Color(0xFFF1F5F9),
+                    width: 44,
+                    height: 40,
+                    color: iconBgColor,
                     child: alert.imageUrl != null && alert.imageUrl!.isNotEmpty
                         ? Image.network(
-                            '${AppConfig.baseUrl}${alert.imageUrl}',
+                            alert.imageUrl!.startsWith('http')
+                                ? alert.imageUrl!
+                                : '${AppConfig.baseUrl}${alert.imageUrl}',
                             fit: BoxFit.cover,
                             errorBuilder: (_, __, ___) =>
                                 Icon(iconData, color: iconColor, size: 20),
@@ -740,60 +767,97 @@ class AlertsHistoryScreenState extends State<AlertsHistoryScreen> {
   }
 
   String _friendlyReason(String raw) {
-    if (raw.contains('PHAT_HIEN_NGUOI_LA') ||
-        raw.toLowerCase().contains('stranger')) {
+    final upper = raw.toUpperCase();
+    if (upper.contains('NGUOI_LA') ||
+        upper.contains('STRANGER') ||
+        upper.contains('PERSON') ||
+        upper.contains('NGUOI')) {
       return 'Phát hiện người lạ';
-    } else if (raw.contains('RUNG_LAC') ||
-        raw.toLowerCase().contains('motion')) {
+    } else if (upper.contains('TIENG_DONG') ||
+        upper.contains('AM_THANH') ||
+        upper.contains('SOUND') ||
+        upper.contains('NOISE') ||
+        upper.contains('YAMNET') ||
+        upper.contains('AUDIO')) {
+      return 'Cảnh báo âm thanh bất thường';
+    } else if (upper.contains('RUNG_LAC') ||
+        upper.contains('CHUYEN_DONG') ||
+        upper.contains('MOTION') ||
+        upper.contains('SHAKE')) {
       return 'Phát hiện chuyển động';
-    } else if (raw.contains('AM_THANH') ||
-        raw.toLowerCase().contains('sound')) {
-      return 'Âm thanh bất thường';
-    } else if (raw.contains('KHOI_DONG') ||
-        raw.toLowerCase().contains('system')) {
-      return 'Hệ thống khởi động';
+    } else if (upper.contains('KHOI_DONG') ||
+        upper.contains('SYSTEM') ||
+        upper.contains('DEVICE')) {
+      return 'Hệ thống hoạt động';
     }
     return raw;
   }
 
   IconData _iconForAlert(String reason) {
-    if (reason.contains('NGUOI_LA') ||
-        reason.toLowerCase().contains('stranger')) {
-      return Icons.person_pin_circle;
-    } else if (reason.contains('RUNG_LAC') ||
-        reason.toLowerCase().contains('motion')) {
-      return Icons.directions_run;
-    } else if (reason.contains('AM_THANH') ||
-        reason.toLowerCase().contains('sound')) {
-      return Icons.graphic_eq;
+    final upper = reason.toUpperCase();
+    if (upper.contains('NGUOI_LA') ||
+        upper.contains('STRANGER') ||
+        upper.contains('PERSON') ||
+        upper.contains('NGUOI')) {
+      return Icons.person_pin_circle_rounded;
+    } else if (upper.contains('TIENG_DONG') ||
+        upper.contains('AM_THANH') ||
+        upper.contains('SOUND') ||
+        upper.contains('NOISE') ||
+        upper.contains('YAMNET') ||
+        upper.contains('AUDIO')) {
+      return Icons.volume_up_rounded;
+    } else if (upper.contains('RUNG_LAC') ||
+        upper.contains('CHUYEN_DONG') ||
+        upper.contains('MOTION') ||
+        upper.contains('SHAKE')) {
+      return Icons.directions_run_rounded;
     }
-    return Icons.settings_power;
+    return Icons.shield_outlined;
   }
 
   Color _iconColorForAlert(String reason) {
-    if (reason.contains('NGUOI_LA') ||
-        reason.toLowerCase().contains('stranger')) {
+    final upper = reason.toUpperCase();
+    if (upper.contains('NGUOI_LA') ||
+        upper.contains('STRANGER') ||
+        upper.contains('PERSON') ||
+        upper.contains('NGUOI')) {
       return AppTheme.coralPink;
-    } else if (reason.contains('RUNG_LAC') ||
-        reason.toLowerCase().contains('motion')) {
-      return const Color(0xFF10B981);
-    } else if (reason.contains('AM_THANH') ||
-        reason.toLowerCase().contains('sound')) {
+    } else if (upper.contains('TIENG_DONG') ||
+        upper.contains('AM_THANH') ||
+        upper.contains('SOUND') ||
+        upper.contains('NOISE') ||
+        upper.contains('YAMNET') ||
+        upper.contains('AUDIO')) {
       return AppTheme.royalPurple;
+    } else if (upper.contains('RUNG_LAC') ||
+        upper.contains('CHUYEN_DONG') ||
+        upper.contains('MOTION') ||
+        upper.contains('SHAKE')) {
+      return const Color(0xFF10B981);
     }
-    return const Color(0xFF3B82F6);
+    return AppTheme.primaryNavy;
   }
 
   Color _iconBgForAlert(String reason) {
-    if (reason.contains('NGUOI_LA') ||
-        reason.toLowerCase().contains('stranger')) {
+    final upper = reason.toUpperCase();
+    if (upper.contains('NGUOI_LA') ||
+        upper.contains('STRANGER') ||
+        upper.contains('PERSON') ||
+        upper.contains('NGUOI')) {
       return const Color(0xFFFFECE8);
-    } else if (reason.contains('RUNG_LAC') ||
-        reason.toLowerCase().contains('motion')) {
-      return const Color(0xFFE8F5E9);
-    } else if (reason.contains('AM_THANH') ||
-        reason.toLowerCase().contains('sound')) {
+    } else if (upper.contains('TIENG_DONG') ||
+        upper.contains('AM_THANH') ||
+        upper.contains('SOUND') ||
+        upper.contains('NOISE') ||
+        upper.contains('YAMNET') ||
+        upper.contains('AUDIO')) {
       return const Color(0xFFF3E8FF);
+    } else if (upper.contains('RUNG_LAC') ||
+        upper.contains('CHUYEN_DONG') ||
+        upper.contains('MOTION') ||
+        upper.contains('SHAKE')) {
+      return const Color(0xFFE8F5E9);
     }
     return const Color(0xFFEFF6FF);
   }
