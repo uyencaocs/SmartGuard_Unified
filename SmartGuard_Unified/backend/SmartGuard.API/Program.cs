@@ -105,7 +105,8 @@ builder.Services.AddDbContext<SmartGuardDbContext>(options =>
 
 // 2. Cấu hình Dependency Injection Services
 builder.Services.Configure<TokenOptions>(builder.Configuration.GetSection(TokenOptions.SectionName));
-builder.Services.Configure<EmailOptions>(builder.Configuration.GetSection(EmailOptions.SectionName));
+builder.Services.Configure<EmailOptions>(builder.Configuration.GetSection("Smtp"));
+builder.Services.AddScoped<IEmailService, EmailService>();
 builder.Services.Configure<DiscordOptions>(builder.Configuration.GetSection(DiscordOptions.SectionName));
 
 builder.Services.AddSingleton<ITokenService, TokenService>();

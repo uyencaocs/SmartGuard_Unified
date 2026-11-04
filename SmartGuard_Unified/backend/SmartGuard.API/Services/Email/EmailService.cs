@@ -26,9 +26,6 @@ namespace SmartGuard.API.Services.Email
         private readonly EmailOptions _smtpSettings;
         private readonly ILogger<EmailService> _logger;
 
-        private const string DefaultSenderEmail = "uyencao.cs@gmail.com";
-        private const string DefaultAppPassword = "cnjaxcgttcovxqpw";
-
         public EmailService(IOptions<EmailOptions> smtpSettings, ILogger<EmailService> logger)
         {
             _smtpSettings = smtpSettings.Value;
@@ -37,23 +34,19 @@ namespace SmartGuard.API.Services.Email
 
         public async Task<bool> SendOtpEmailAsync(string toEmail, string username, string otpCode)
         {
-            var senderEmail = !string.IsNullOrWhiteSpace(_smtpSettings.Email)
-                ? _smtpSettings.Email.Trim()
-                : (Environment.GetEnvironmentVariable("SMTP_EMAIL")
-                   ?? Environment.GetEnvironmentVariable("Smtp__Email")
-                   ?? DefaultSenderEmail);
+            // Lấy trực tiếp từ IOptions (ASP.NET Core tự động lấy từ User Secrets ở Local hoặc Environment trên Render)
+            var senderEmail = _smtpSettings.Email?.Trim();
+            var appPassword = _smtpSettings.Password?.Replace(" ", "").Trim();
 
-            var rawPassword = !string.IsNullOrWhiteSpace(_smtpSettings.Password)
-                ? _smtpSettings.Password
-                : (Environment.GetEnvironmentVariable("SMTP_PASSWORD")
-                   ?? Environment.GetEnvironmentVariable("Smtp__Password")
-                   ?? DefaultAppPassword);
-
-            var appPassword = rawPassword.Replace(" ", "").Trim();
+            // Nếu chưa cấu hình email hoặc mật khẩu, chặn ngay từ đầu để tránh lỗi ngầm
+            if (string.IsNullOrWhiteSpace(senderEmail) || string.IsNullOrWhiteSpace(appPassword))
+            {
+                _logger.LogError("❌ [EMAIL] Cấu hình Smtp:Email hoặc Smtp:Password đang trống. Kiểm tra lại User Secrets hoặc biến môi trường.");
+                return false;
+            }
 
             var host = !string.IsNullOrWhiteSpace(_smtpSettings.Host) ? _smtpSettings.Host.Trim() : "smtp.gmail.com";
             var configuredPort = _smtpSettings.Port > 0 ? _smtpSettings.Port : 587;
-
             var safeUsername = string.IsNullOrWhiteSpace(username) ? toEmail : username.Trim();
 
             var message = new MimeMessage();
@@ -85,7 +78,6 @@ namespace SmartGuard.API.Services.Email
 
             message.Body = bodyBuilder.ToMessageBody();
 
-            // Thử cổng cấu hình (587 StartTls), sau đó fallback sang 465 (SslOnConnect)
             var attempts = new (int Port, SecureSocketOptions Option)[]
             {
                 (configuredPort, SecureSocketOptions.StartTls),
@@ -97,8 +89,9 @@ namespace SmartGuard.API.Services.Email
                 try
                 {
                     using var client = new SmtpClient();
-                    client.Timeout = 6000;
-                    using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(6000));
+                    // Tăng thời gian chờ (Timeout) lên 10 giây để tránh việc MailKit bỏ cuộc sớm khi mạng chậm
+                    client.Timeout = 10000;
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
 
                     await client.ConnectAsync(host, attempt.Port, attempt.Option, cts.Token);
                     await client.AuthenticateAsync(senderEmail, appPassword, cts.Token);
@@ -114,7 +107,7 @@ namespace SmartGuard.API.Services.Email
                 }
             }
 
-            _logger.LogWarning("⚠️ [EMAIL] Không thể kết nối cổng SMTP của Gmail (có thể bị chặn bởi tường lửa Cloud Render). Trả về mã OTP dự phòng cho {ToEmail}.", toEmail);
+            _logger.LogWarning("⚠️ [EMAIL] Không thể kết nối hoặc xác thực SMTP của Gmail. Trả về mã OTP dự phòng cho {ToEmail}.", toEmail);
             return false;
         }
     }
